@@ -22,16 +22,25 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Build: cook deps from recipe (cached layer), then compile the workspace + SPA.
+# Cache mounts (per-arch, so amd64 and arm64 don't collide):
+#   - cargo registry/git: dep source cache (shared across all rust builds)
+#   - target/: compiled artifacts; chef-cook + workspace build write here, persisted across builds
+#   - bun install cache + node_modules: speed up the build.rs SPA pipeline
 FROM chef AS builder
+ARG TARGETARCH
 COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETARCH} \
+    --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETARCH} \
+    --mount=type=cache,target=/app/target,id=cargo-target-${TARGETARCH},sharing=locked \
     cargo chef cook --release --recipe-path recipe.json
 COPY . .
 # build.rs only runs the bun pipeline in release mode or when this is set; explicit is safer.
 ENV SUDORATIO_BUILD_WEB=1
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETARCH} \
+    --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git-${TARGETARCH} \
+    --mount=type=cache,target=/app/target,id=cargo-target-${TARGETARCH},sharing=locked \
+    --mount=type=cache,target=/root/.bun/install/cache,id=bun-cache-${TARGETARCH} \
+    --mount=type=cache,target=/app/web/node_modules,id=node-modules-${TARGETARCH},sharing=locked \
     cargo build --release --bin sudoratio-server \
     && strip target/release/sudoratio-server \
     && cp target/release/sudoratio-server /sudoratio-server \

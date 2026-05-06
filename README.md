@@ -6,9 +6,10 @@
 
 **A self-hosted BitTorrent tracker-protocol simulator and research toolkit, with a modern web UI.**
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.93+-orange.svg)](https://www.rust-lang.org)
-[![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg)](./Dockerfile)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.93+-orange.svg?style=flat-square)](https://www.rust-lang.org)
+[![Build](https://img.shields.io/github/actions/workflow/status/viperadnan-git/sudoratio/docker.yml?branch=main&style=flat-square&label=build)](https://github.com/viperadnan-git/sudoratio/actions/workflows/docker.yml)
+[![Docker Image Size](https://img.shields.io/docker/image-size/viperadnan/sudoratio/latest?style=flat-square&logo=docker&label=image%20size)](https://hub.docker.com/r/viperadnan/sudoratio)
 
 [Quick Start](#quick-start) · [Configuration](#configuration) · [Client Profiles](#client-profiles) · [Architecture](#architecture) · [API](#http-api) · [Development](#development)
 
