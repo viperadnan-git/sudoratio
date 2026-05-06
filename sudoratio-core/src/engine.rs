@@ -436,13 +436,26 @@ impl Engine {
     /// repositions the cap inside its swarm-aware band) and dispatches the outbound BT dial
     /// burst against peers in the response.
     pub(crate) fn post_announce_success(self: &Arc<Self>, tid: TorrentId, out: &AnnounceOutcome) {
-        self.bandwidth.update_torrent_peers(
+        self.bandwidth.on_announce_success(
             tid,
             out.seeders.unwrap_or(0) as i64,
             out.leechers.unwrap_or(0) as i64,
             &self.torrents,
         );
         crate::wire::spawn_dials(self.clone(), tid.0, out.peers.clone());
+    }
+
+    /// Register the torrent with the bandwidth dispatcher using current config bounds.
+    pub(crate) fn register_bandwidth_for_torrent(&self, tid: TorrentId) {
+        let cfg = self.config.load();
+        self.bandwidth.register_torrent(
+            tid,
+            cfg.min_download_speed,
+            cfg.max_download_speed,
+            cfg.min_upload_speed,
+            cfg.max_upload_speed,
+            &self.torrents,
+        );
     }
 
     /// Bind the BT peer listener. Idempotent.

@@ -53,7 +53,7 @@ fn sample_speed_range(min: u64, max: u64) -> u64 {
         max
     } else {
         let mut rng = rand::rng();
-        rng.random_range(min..max)
+        rng.random_range(min..=max)
     }
 }
 
@@ -248,8 +248,8 @@ impl BandwidthDispatcher {
         self.recompute_with_torrent_rows(torrent_rows);
     }
 
-    /// Update swarm counts and recompute reported speeds (gates upload/download by presence).
-    pub fn update_torrent_peers(
+    /// Per-announce hook: store swarm counts, resample the cap, recompute reported speeds.
+    pub fn on_announce_success(
         &self,
         id: TorrentId,
         seeders: i64,
@@ -260,6 +260,7 @@ impl BandwidthDispatcher {
             e.seeders.store(seeders, Ordering::Relaxed);
             e.leechers.store(leechers, Ordering::Relaxed);
         }
+        self.resample_one_inplace(id);
         self.recompute_with_torrent_rows(torrent_rows);
     }
 

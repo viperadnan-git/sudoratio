@@ -157,18 +157,6 @@ fn upload_ratio_applies(inner: &Engine, tid: TorrentId) -> bool {
         .unwrap_or(true)
 }
 
-fn register_bandwidth_after_started(inner: &Engine, tid: TorrentId) {
-    let cfg = inner.config.load();
-    inner.bandwidth.register_torrent(
-        tid,
-        cfg.min_download_speed,
-        cfg.max_download_speed,
-        cfg.min_upload_speed,
-        cfg.max_upload_speed,
-        &inner.torrents,
-    );
-}
-
 /// Run the post-success policy checks (no-leechers / upload-ratio) for a
 /// successful announce. Returns `true` if the torrent has been auto-paused
 /// and the caller should NOT schedule the next announce.
@@ -201,8 +189,10 @@ async fn handle_queued_announce(inner: Arc<Engine>, tid: TorrentId, ev: Announce
         .exec_tracker_announce(tid, ev, &AnnounceQueryOverrides::default())
         .await;
     match (ev, res) {
-        (AnnounceEvent::Started, Ok(out)) => {
-            register_bandwidth_after_started(&inner, tid);
+        (AnnounceEvent::Started | AnnounceEvent::None | AnnounceEvent::Completed, Ok(out)) => {
+            if ev == AnnounceEvent::Started {
+                inner.register_bandwidth_for_torrent(tid);
+            }
             inner.post_announce_success(tid, &out);
             if maybe_auto_pause(&inner, tid).await {
                 return;
@@ -211,32 +201,11 @@ async fn handle_queued_announce(inner: Arc<Engine>, tid: TorrentId, ev: Announce
             let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out)));
             delay_schedule(&inner, tid, AnnounceEvent::None, iv).await;
         }
-        (AnnounceEvent::None, Ok(out)) => {
-            inner.post_announce_success(tid, &out);
-            if maybe_auto_pause(&inner, tid).await {
-                return;
-            }
-            inner.reset_consecutive_fails(tid);
-            let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out)));
-            delay_schedule(&inner, tid, AnnounceEvent::None, iv).await;
-        }
-        (AnnounceEvent::Completed, Ok(out)) => {
-            inner.post_announce_success(tid, &out);
-            if maybe_auto_pause(&inner, tid).await {
-                return;
-            }
-            inner.reset_consecutive_fails(tid);
-            let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out)));
-            delay_schedule(&inner, tid, AnnounceEvent::None, iv).await;
-        }
-        (AnnounceEvent::Started, Err(_)) => {
-            handle_announce_error(&inner, tid, AnnounceEvent::Started).await;
-        }
-        (AnnounceEvent::None, Err(_)) => {
-            handle_announce_error(&inner, tid, AnnounceEvent::None).await;
-        }
-        (AnnounceEvent::Completed, Err(_)) => {
-            handle_announce_error(&inner, tid, AnnounceEvent::Completed).await;
+        (
+            ev @ (AnnounceEvent::Started | AnnounceEvent::None | AnnounceEvent::Completed),
+            Err(_),
+        ) => {
+            handle_announce_error(&inner, tid, ev).await;
         }
         (AnnounceEvent::Stopped, _) => {
             // Fire-and-forget: real clients never retry `stopped`.
