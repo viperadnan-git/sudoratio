@@ -1,0 +1,47 @@
+client = "utorrent"
+numwant = 200
+request_headers = [
+    { name = "User-Agent", value = "uTorrent/3220(28500)" },
+    { name = "Accept-Encoding", value = "gzip" },
+    { name = "Accept-Language", value = "{locale}" },
+    { name = "Connection", value = "Close" },
+]
+
+[key_generator]
+key_case = "upper"
+refresh_on = "timed_or_after_started_announce"
+
+[key_generator.algorithm]
+length = 8
+type = "hash"
+
+[peer_id_generator]
+should_url_encode = true
+refresh_on = "never"
+
+[peer_id_generator.algorithm]
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9-]"
+encoded_hex_case = "lower"
+
+[[variant]]
+version = "3.2.2_28500"
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&key={key}&event={event}&numwant={numwant}&compact=1&no_peer_id=1&ipv6={ipv6}"
+numwant_on_stop = 200
+
+[variant.peer_id_generator.algorithm]
+pattern = "-UT3220-To[\u0001-ÿ]{10}"
+
+[[variant]]
+version = "3.5.4_44498"
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&key={key}&event={event}&numwant={numwant}&compact=1&no_peer_id=1"
+numwant_on_stop = 0
+headers_patch = [
+    { name = "User-Agent", value = "uTorrent/354(111783378)(44498)" },
+    { name = "Accept-Language", remove = true },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-UT354S-(Ò)(­)[\u0001-ÿ]{10}"

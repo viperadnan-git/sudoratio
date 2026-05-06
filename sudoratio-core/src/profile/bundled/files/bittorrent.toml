@@ -1,0 +1,32 @@
+client = "bittorrent"
+numwant_on_stop = 0
+numwant = 200
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&key={key}&event={event}&numwant={numwant}&compact=1&no_peer_id=1"
+request_headers = [
+    { name = "User-Agent", value = "BitTorrent/7103(256355725)(44429)" },
+    { name = "Accept-Encoding", value = "gzip" },
+    { name = "Connection", value = "Close" },
+]
+variant = [
+    { version = "7.10.3_44429" },
+]
+
+[key_generator]
+key_case = "upper"
+refresh_on = "timed_or_after_started_announce"
+
+[key_generator.algorithm]
+length = 8
+type = "hash"
+
+[peer_id_generator]
+should_url_encode = true
+refresh_on = "never"
+
+[peer_id_generator.algorithm]
+pattern = "-BT7a3S-()(­)[\u0001-ÿ]{10}"
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9-]"
+encoded_hex_case = "lower"

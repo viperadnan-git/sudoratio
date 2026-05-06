@@ -1,0 +1,43 @@
+client = "rtorrent"
+numwant_on_stop = 0
+numwant = 50
+query = "info_hash={infohash}&peer_id={peerid}&key={key}&compact=1&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&event={event}"
+request_headers = [
+    { name = "User-Agent", value = "rtorrent/0.9.6/0.13.6" },
+    { name = "Accept", value = "*/*" },
+    { name = "Accept-Encoding", value = "deflate, gzip" },
+]
+
+[key_generator]
+key_case = "lower"
+refresh_on = "torrent_persistent"
+
+[key_generator.algorithm]
+length = 8
+type = "hash"
+
+[peer_id_generator]
+should_url_encode = true
+refresh_on = "torrent_persistent"
+
+[peer_id_generator.algorithm]
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9-]"
+encoded_hex_case = "upper"
+
+[[variant]]
+version = "0.9.6_0.13.6"
+
+[variant.peer_id_generator.algorithm]
+pattern = "-lt0D60-[\u0001-\u00ff]{12}"
+
+[[variant]]
+version = "0.16.11"
+headers_patch = [
+    { name = "User-Agent", value = "rtorrent/0.16.11/0.16.11" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-lt100B-[\u0001-\u00ff]{12}"

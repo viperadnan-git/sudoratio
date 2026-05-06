@@ -1,0 +1,61 @@
+client = "deluge"
+numwant_on_stop = 0
+numwant = 200
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&key={key}&event={event}&numwant={numwant}&compact=1&no_peer_id=1&supportcrypto=1&redundant=0"
+request_headers = [
+    { name = "User-Agent", value = "Deluge 1.3.15" },
+    { name = "Accept-Encoding", value = "gzip" },
+    { name = "Connection", value = "close" },
+]
+
+[key_generator]
+key_case = "upper"
+refresh_on = "torrent_persistent"
+
+[key_generator.algorithm]
+length = 8
+type = "hash_no_leading_zero"
+
+[peer_id_generator]
+should_url_encode = false
+refresh_on = "never"
+
+[peer_id_generator.algorithm]
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9_~\\(\\)\\!\\.\\*-]"
+encoded_hex_case = "lower"
+
+[[variant]]
+version = "1.3.15"
+
+[variant.peer_id_generator.algorithm]
+pattern = "-DE13F0-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "2.0.3"
+headers_patch = [
+    { name = "User-Agent", value = "Deluge/2.0.3 libtorrent/2.0.5.0" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-DE203s-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "2.1.1"
+headers_patch = [
+    { name = "User-Agent", value = "Deluge/2.1.1 libtorrent/1.2.15.0" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-DE211s-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "2.2.0"
+headers_patch = [
+    { name = "User-Agent", value = "Deluge/2.2.0 libtorrent/2.0.11.0" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-DE220s-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"

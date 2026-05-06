@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["sudoratio-core", "sudoratio-server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Adnan Ahmad <viperadnan@gmail.com>"]
+repository = "https://github.com/viperadnan-git/sudoratio"
+homepage = "https://github.com/viperadnan-git/sudoratio"
+readme = "README.md"
+keywords = ["bittorrent", "tracker", "protocol", "simulation", "research"]
+categories = ["network-programming", "simulation", "development-tools::testing"]

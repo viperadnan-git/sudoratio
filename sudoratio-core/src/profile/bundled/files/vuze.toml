@@ -1,0 +1,33 @@
+client = "vuze"
+numwant_on_stop = 0
+numwant = 100
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&azudp={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&event={event}&numwant={numwant}&no_peer_id=1&compact=1&key={key}&azver=3"
+request_headers = [
+    { name = "User-Agent", value = "Azureus 5.7.5.0;{os};Java {java}" },
+    { name = "Connection", value = "close" },
+    { name = "Accept-Encoding", value = "gzip" },
+    { name = "Accept", value = "text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2" },
+]
+variant = [
+    { version = "5.7.5.0" },
+]
+
+[key_generator]
+key_case = "none"
+refresh_on = "torrent_volatile"
+
+[key_generator.algorithm]
+pattern = "[A-Za-z0-9]{8}"
+type = "regex"
+
+[peer_id_generator]
+should_url_encode = false
+refresh_on = "torrent_volatile"
+
+[peer_id_generator.algorithm]
+pattern = "-AZ5750-[a-zA-Z0-9]{12}"
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9_~\\(\\)\\!\\.\\*-]"
+encoded_hex_case = "upper"

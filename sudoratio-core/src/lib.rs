@@ -1,0 +1,33 @@
+//! **sudoratio-core** — HTTP tracker announces, bandwidth simulation, and a seeding orchestrator.
+//!
+//! There is no BitTorrent peer wire protocol and no on-disk payload download: only metainfo
+//! fields, TOML-defined client profiles, and HTTP(S) requests to trackers.
+
+#![forbid(unsafe_code)]
+
+mod announce;
+mod bandwidth;
+mod config;
+mod engine;
+mod metainfo;
+mod scheduler;
+mod state;
+mod wire;
+
+pub mod error;
+pub mod profile;
+pub mod torrent;
+
+pub use bandwidth::SwarmSpeedDerivation;
+pub use config::{EngineConfig, HttpTrackerConfig};
+pub use error::{ApiErrorBody, SudoratioError};
+pub use metainfo::parse as parse_metainfo;
+pub use profile::{parse_client_doc, ClientDoc};
+pub use state::Engine;
+pub use torrent::{
+    AnnounceEvent, AnnounceHttpHeader, AnnounceOutcome, AnnounceQueryOverrides,
+    AnnounceRequestParams, AnnounceRequestTrace, AnnounceResponseTrace, AnnounceTrace,
+    ClientProfileId, ClientProfileSummary, HealthStatus, MetainfoTorrent, SeedingStatus,
+    StopReason, Torrent, TorrentId, TorrentRuntime, TorrentState, TrackersHttp, TransferPhase,
+    TransferStats,
+};

@@ -1,0 +1,599 @@
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Inbox,
+  Timer,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { z } from "zod";
+
+import { AddTorrentDialog } from "@/components/add-torrent-dialog";
+import { TorrentActions } from "@/components/torrent-actions";
+import { TorrentDetailSheet } from "@/components/torrent-detail-sheet";
+import { TorrentStatusBadge } from "@/components/torrent-status-badge";
+import { useNow } from "@/hooks/use-now";
+import {
+  fmtBytes,
+  fmtCountdown,
+  fmtRatio,
+  fmtSpeed,
+  shortHash,
+} from "@/lib/format";
+import { useStats, useTorrents } from "@/lib/queries";
+import type { Torrent } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+const searchSchema = z.object({
+  selected: z.string().optional().catch(undefined),
+});
+
+export const Route = createFileRoute("/_authed/")({
+  validateSearch: searchSchema,
+  component: TorrentsPage,
+});
+
+type SortKey =
+  | "name"
+  | "state"
+  | "size"
+  | "ratio"
+  | "upload_speed"
+  | "download_speed"
+  | "swarm"
+  | "next";
+type SortDir = "asc" | "desc";
+
+const STATE_RANK: Record<Torrent["state"], number> = {
+  downloading: 0,
+  seeding: 1,
+  queued: 2,
+  stopped: 3,
+};
+
+function nextAnnounceMs(t: Torrent): number {
+  if (t.state !== "downloading" && t.state !== "seeding") return Infinity;
+  if (!t.last_announced_at || !t.announce_interval) return Infinity;
+  return t.last_announced_at + t.announce_interval * 1000;
+}
+
+function compareBy(a: Torrent, b: Torrent, key: SortKey): number {
+  switch (key) {
+    case "name":
+      return a.name.localeCompare(b.name);
+    case "state":
+      return STATE_RANK[a.state] - STATE_RANK[b.state];
+    case "size":
+      return (a.size ?? 0) - (b.size ?? 0);
+    case "ratio": {
+      const ra = (a.uploaded ?? 0) / Math.max(1, a.size ?? 1);
+      const rb = (b.uploaded ?? 0) / Math.max(1, b.size ?? 1);
+      return ra - rb;
+    }
+    case "upload_speed":
+      return (a.upload_speed ?? 0) - (b.upload_speed ?? 0);
+    case "download_speed":
+      return (a.download_speed ?? 0) - (b.download_speed ?? 0);
+    case "swarm":
+      return (a.seeders ?? 0) - (b.seeders ?? 0);
+    case "next":
+      return nextAnnounceMs(a) - nextAnnounceMs(b);
+  }
+}
+
+function sortTorrents(rows: Torrent[], key: SortKey, dir: SortDir): Torrent[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const out = [...rows];
+  out.sort((a, b) => {
+    const primary = sign * compareBy(a, b, key);
+    if (primary !== 0) return primary;
+    return a.queue_position - b.queue_position;
+  });
+  return out;
+}
+
+function TorrentsPage() {
+  const navigate = useNavigate();
+  const { selected } = Route.useSearch();
+  const { data, isLoading } = useTorrents();
+  const stats = useStats();
+  const [sort, setSort] = useState<{
+    key: SortKey;
+    dir: SortDir;
+    userSet: boolean;
+  }>({ key: "state", dir: "asc", userSet: false });
+  const torrents = useMemo(
+    () => sortTorrents(data ?? [], sort.key, sort.dir),
+    [data, sort],
+  );
+  const onSort = (key: SortKey) => {
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === "asc" ? "desc" : "asc", userSet: true }
+        : { key, dir: "asc", userSet: true },
+    );
+  };
+
+  const now = useNow();
+  const open = (infoHash: string | undefined | null) => {
+    if (!infoHash) return;
+    navigate({ to: "/", search: { selected: infoHash } });
+  };
+  const close = () => navigate({ to: "/", search: {} });
+
+  return (
+    <div className="px-3 pb-12 pt-4 md:px-6 md:pt-6">
+      {/* ── Page header ── */}
+      <header className="mb-5 flex items-end justify-between gap-4 md:mb-7">
+        <div>
+          <div className="eyebrow mb-1.5">Operations · Torrents</div>
+          <h1 className="text-[22px] font-semibold leading-tight tracking-tight md:text-[28px]">
+            Tracker pulse
+          </h1>
+        </div>
+        <AddTorrentDialog />
+      </header>
+
+      {/* ── Hero summary ── */}
+      <section className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border md:grid-cols-4">
+        <HeroStat
+          icon={<Activity className="size-3" strokeWidth={1.75} />}
+          label="Active"
+          value={stats.data ? `${stats.data.active_torrents}` : "—"}
+          sub={
+            stats.data
+              ? `of ${stats.data.max_active_torrents} slots`
+              : undefined
+          }
+        />
+        <HeroStat
+          icon={<Clock className="size-3" strokeWidth={1.75} />}
+          label="Waiting"
+          value={stats.data ? `${stats.data.waiting_torrents}` : "—"}
+          sub={
+            stats.data
+              ? `${stats.data.tracked_metainfo_torrents} tracked`
+              : undefined
+          }
+        />
+        <HeroStat
+          icon={<TrendingUp className="size-3" strokeWidth={1.75} />}
+          label="Aggregate up"
+          value={fmtSpeed(stats.data?.upload_speed)}
+          sub="across all torrents"
+        />
+        <HeroStat
+          icon={<TrendingDown className="size-3" strokeWidth={1.75} />}
+          label="Aggregate down"
+          value={fmtSpeed(stats.data?.download_speed)}
+          sub="across all torrents"
+        />
+      </section>
+
+      {/* ── List ── */}
+      <section>
+        <header className="mb-2 flex items-center justify-between">
+          <span className="eyebrow-strong">Torrents</span>
+          <span className="num text-[11px] text-muted-foreground">
+            {isLoading
+              ? "—"
+              : `${torrents.length.toString().padStart(2, "0")} ROWS`}
+          </span>
+        </header>
+
+        {torrents.length === 0 && !isLoading ? (
+          <EmptyState />
+        ) : (
+          <>
+            {/* Mobile cards */}
+            <ul className="space-y-1.5 md:hidden">
+              {torrents.map((t) => (
+                <TorrentCard key={t.id} t={t} now={now} onOpen={open} />
+              ))}
+            </ul>
+
+            {/* Desktop table */}
+            <div className="hidden overflow-hidden rounded-md border bg-card md:block">
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <SortableTh
+                      className="w-[36%]"
+                      sortKey="name"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      Name
+                    </SortableTh>
+                    <SortableTh sortKey="state" sort={sort} onSort={onSort}>
+                      Status
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="size"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      Size
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="ratio"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      Ratio
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="upload_speed"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      ↑
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="download_speed"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      ↓
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="swarm"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      S / L
+                    </SortableTh>
+                    <SortableTh
+                      align="right"
+                      sortKey="next"
+                      sort={sort}
+                      onSort={onSort}
+                    >
+                      Next
+                    </SortableTh>
+                    <Th className="w-[40px]" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {torrents.map((t) => (
+                    <TorrentRow key={t.id} t={t} now={now} onOpen={open} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+
+      <TorrentDetailSheet infoHash={selected ?? null} onClose={close} />
+    </div>
+  );
+}
+
+/* ───────────────────────── HERO STAT ───────────────────────── */
+
+function HeroStat({
+  icon,
+  label,
+  value,
+  sub,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-2 bg-background p-4 md:p-5">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        {icon}
+        <span className="eyebrow">{label}</span>
+      </div>
+      <div className="num text-[24px] font-semibold leading-none tracking-tight md:text-[28px]">
+        {value}
+      </div>
+      {sub && (
+        <div className="font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/80">
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── TABLE ───────────────────────── */
+
+function Th({
+  children,
+  align = "left",
+  className,
+}: {
+  children?: React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  return (
+    <th
+      className={cn(
+        "h-9 px-3 align-middle font-mono text-[10px] font-medium uppercase tracking-[0.14em]",
+        align === "right" && "text-right",
+        className,
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
+function SortableTh({
+  children,
+  align = "left",
+  className,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  children?: React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; dir: SortDir; userSet: boolean };
+  onSort: (k: SortKey) => void;
+}) {
+  const showArrow = sort.key === sortKey && sort.userSet;
+  return (
+    <th
+      className={cn(
+        "h-9 px-3 align-middle font-mono text-[10px] font-medium uppercase tracking-[0.14em]",
+        align === "right" && "text-right",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          "inline-flex items-center gap-1 transition-colors hover:text-foreground",
+          align === "right" && "flex-row-reverse",
+        )}
+      >
+        <span>{children}</span>
+        {showArrow &&
+          (sort.dir === "asc" ? (
+            <ChevronUp className="size-3" strokeWidth={2.25} />
+          ) : (
+            <ChevronDown className="size-3" strokeWidth={2.25} />
+          ))}
+      </button>
+    </th>
+  );
+}
+
+function Td({
+  children,
+  align = "left",
+  className,
+}: {
+  children?: React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  return (
+    <td
+      className={cn(
+        "px-3 py-2.5 align-middle",
+        align === "right" && "text-right",
+        className,
+      )}
+    >
+      {children}
+    </td>
+  );
+}
+
+function TorrentRow({
+  t,
+  now,
+  onOpen,
+}: {
+  t: Torrent;
+  now: number;
+  onOpen: (h: string | null | undefined) => void;
+}) {
+  const isActive = t.state === "downloading" || t.state === "seeding";
+  const nextCountdown = (() => {
+    if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
+    return fmtCountdown(t.last_announced_at + t.announce_interval * 1000 - now);
+  })();
+  const countdownLive = nextCountdown !== "—";
+
+  return (
+    <tr
+      className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-accent/40"
+      onClick={() => onOpen(t.info_hash)}
+    >
+      <Td>
+        <div className="font-medium leading-tight">{t.name}</div>
+        <div className="num mt-0.5 text-[11px] text-muted-foreground">
+          {shortHash(t.info_hash)}
+        </div>
+      </Td>
+      <Td>
+        <TorrentStatusBadge t={t} />
+      </Td>
+      <Td align="right">
+        <span className="num text-foreground/80">{fmtBytes(t.size)}</span>
+      </Td>
+      <Td align="right">
+        <span className="num text-foreground/80">
+          {fmtRatio(t.uploaded, t.size)}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="num text-foreground/80">
+          {fmtSpeed(t.upload_speed)}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="num text-foreground/80">
+          {fmtSpeed(t.download_speed)}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="num text-foreground/80">
+          {t.seeders ?? "—"} / {t.leechers ?? "—"}
+        </span>
+      </Td>
+      <Td align="right">
+        <span
+          className={cn(
+            "num tabular-nums",
+            countdownLive ? "text-foreground/80" : "text-muted-foreground",
+          )}
+        >
+          {nextCountdown}
+        </span>
+      </Td>
+      <Td>
+        {/** biome-ignore lint/a11y/noStaticElementInteractions: action wrapper inside clickable row */}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <TorrentActions t={t} />
+        </div>
+      </Td>
+    </tr>
+  );
+}
+
+/* ───────────────────────── MOBILE CARD ───────────────────────── */
+
+function TorrentCard({
+  t,
+  now,
+  onOpen,
+}: {
+  t: Torrent;
+  now: number;
+  onOpen: (h: string | null | undefined) => void;
+}) {
+  const isActive = t.state === "downloading" || t.state === "seeding";
+  const nextCountdown = (() => {
+    if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
+    return fmtCountdown(t.last_announced_at + t.announce_interval * 1000 - now);
+  })();
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpen(t.info_hash)}
+        className="block w-full rounded-md border bg-card p-3.5 text-left transition-colors hover:bg-accent/40"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="truncate text-[13.5px] font-medium leading-tight">
+              {t.name}
+            </div>
+            <div className="num text-[11px] text-muted-foreground">
+              {shortHash(t.info_hash)}
+            </div>
+          </div>
+          {/** biome-ignore lint/a11y/noStaticElementInteractions: action wrapper inside clickable card */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <TorrentActions t={t} />
+          </div>
+        </div>
+
+        <div className="my-3 hairline" />
+
+        <div className="flex items-center justify-between gap-2">
+          <TorrentStatusBadge t={t} />
+          <span className="num text-[11px] text-muted-foreground">
+            {fmtBytes(t.size)} · {fmtRatio(t.uploaded, t.size)}× ·{" "}
+            {t.seeders ?? "—"}/{t.leechers ?? "—"}
+          </span>
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
+          <Mini
+            icon={<ArrowUp className="size-3" strokeWidth={2} />}
+            value={fmtSpeed(t.upload_speed)}
+            color="success"
+          />
+          <Mini
+            icon={<ArrowDown className="size-3" strokeWidth={2} />}
+            value={fmtSpeed(t.download_speed)}
+            color="signal"
+          />
+          <Mini
+            icon={<Timer className="size-3" strokeWidth={2} />}
+            value={nextCountdown}
+          />
+        </div>
+      </button>
+    </li>
+  );
+}
+
+function Mini({
+  label,
+  icon,
+  value,
+  color,
+}: {
+  label?: string;
+  icon?: React.ReactNode;
+  value: string;
+  color?: "success" | "signal";
+}) {
+  return (
+    <div className="rounded-sm border bg-background/60 px-2 py-1.5">
+      <div
+        className={cn(
+          "flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground",
+          color === "success" && "text-success",
+          color === "signal" && "text-signal",
+        )}
+      >
+        {icon}
+        {label && <span>{label}</span>}
+      </div>
+      <div className="num mt-0.5 text-[12px] font-medium text-foreground/90">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── EMPTY ───────────────────────── */
+
+function EmptyState() {
+  return (
+    <div className="rounded-md border border-dashed bg-card/30 p-10 text-center">
+      <Inbox
+        className="mx-auto mb-3 size-8 text-muted-foreground/60"
+        strokeWidth={1.25}
+      />
+      <div className="text-[13px] font-medium">No torrents tracked</div>
+      <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+        add a `.torrent` file to spawn the announce loop
+      </p>
+    </div>
+  );
+}

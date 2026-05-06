@@ -1,0 +1,32 @@
+[package]
+name = "sudoratio-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "BitTorrent tracker-announce and peer-handshake protocol engine for research and testing. Embeddable core for sudoratio."
+
+[dependencies]
+arc-swap = "1.7"
+base64 = "0.22"
+dashmap = "6"
+hex = "0.4"
+parking_lot = "0.12"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.12", features = ["gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_bencode = "0.2"
+serde_bytes = "0.11"
+serde_json = "1"
+sha1 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "sync", "rt", "macros"] }
+toml = "0.9"
+tracing = { version = "0.1", features = ["attributes"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }

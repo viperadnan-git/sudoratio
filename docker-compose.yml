@@ -1,0 +1,25 @@
+# `docker compose up -d` — pulls the published image; falls back to a local build if absent.
+# Override defaults via .env: SUDORATIO_PASSWORD (required), SUDORATIO_PORT, SUDORATIO_LOG,
+# SUDORATIO_IMAGE (e.g. `ghcr.io/viperadnan-git/sudoratio:latest` to pull from GHCR instead).
+
+services:
+  sudoratio-server:
+    image: ${SUDORATIO_IMAGE:-viperadnan/sudoratio:latest}
+    container_name: sudoratio-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SUDORATIO_PORT:-8787}:8787"
+    environment:
+      # The clap arg `--password` reads from this env var by default.
+      SUDORATIO_PASSWORD: ${SUDORATIO_PASSWORD:?set SUDORATIO_PASSWORD in .env or environment}
+      RUST_LOG: ${SUDORATIO_LOG:-sudoratio_server=info,sudoratio_core=info,tower_http=info}
+    volumes:
+      # Persists config.json + session.sqlite3 across restarts.
+      - sudoratio-data:/data
+
+volumes:
+  sudoratio-data:
+    driver: local

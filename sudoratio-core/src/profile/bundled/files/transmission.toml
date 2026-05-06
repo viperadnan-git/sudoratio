@@ -1,0 +1,94 @@
+client = "transmission"
+numwant_on_stop = 0
+numwant = 80
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&numwant={numwant}&key={key}&compact=1&supportcrypto=1&event={event}&ipv6={ipv6}"
+request_headers = [
+    { name = "User-Agent", value = "Transmission/2.82" },
+    { name = "Accept", value = "*/*" },
+    { name = "Accept-Encoding", value = "gzip;q=1.0, deflate, identity" },
+]
+
+[key_generator]
+key_case = "lower"
+refresh_on = "never"
+
+[key_generator.algorithm]
+upper = 2147483647
+type = "digit_range_hex"
+lower = 1
+
+[peer_id_generator]
+should_url_encode = false
+refresh_on = "torrent_volatile"
+
+[peer_id_generator.algorithm]
+type = "random_pool_with_checksum"
+base = 36
+characters_pool = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9-]"
+encoded_hex_case = "lower"
+
+[[variant]]
+version = "2.82_14160"
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR2820-"
+
+[[variant]]
+version = "2.92_14714"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/2.84+" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR284Z-"
+
+[[variant]]
+version = "2.93"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/2.93" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR2930-"
+
+[[variant]]
+version = "2.94"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/2.94" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR2940-"
+
+[[variant]]
+version = "3.00"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/3.00" },
+    { name = "Accept-Encoding", value = "deflate, gzip" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR3000-"
+
+[[variant]]
+version = "4.05"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/4.05" },
+    { name = "Accept-Encoding", value = "deflate, gzip" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR4050-"
+
+[[variant]]
+version = "4.1.1"
+headers_patch = [
+    { name = "User-Agent", value = "Transmission/4.1.1" },
+    { name = "Accept-Encoding", value = "deflate, gzip" },
+]
+
+[variant.peer_id_generator.algorithm]
+prefix = "-TR4110-"

@@ -1,0 +1,106 @@
+client = "qbittorrent"
+numwant_on_stop = 0
+numwant = 200
+query = "info_hash={infohash}&peer_id={peerid}&port={port}&uploaded={uploaded}&downloaded={downloaded}&left={left}&corrupt=0&key={key}&event={event}&numwant={numwant}&compact=1&no_peer_id=1&supportcrypto=1&redundant=0"
+request_headers = [
+    { name = "User-Agent", value = "qBittorrent/3.3.16" },
+    { name = "Accept-Encoding", value = "gzip" },
+    { name = "Connection", value = "close" },
+]
+
+[key_generator]
+key_case = "upper"
+refresh_on = "torrent_persistent"
+
+[key_generator.algorithm]
+length = 8
+type = "hash_no_leading_zero"
+
+[peer_id_generator]
+should_url_encode = false
+refresh_on = "never"
+
+[peer_id_generator.algorithm]
+type = "regex"
+
+[url_encoder]
+encoding_exclusion_pattern = "[A-Za-z0-9_~\\(\\)\\!\\.\\*-]"
+encoded_hex_case = "lower"
+
+[[variant]]
+version = "3.3.16"
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB33G0-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.0.4"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.0.4" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4040-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.1.9"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.1.9" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4190-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.2.5"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.2.5" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4250-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.3.9"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.3.9" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4390-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.4.5"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.4.5" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4450-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.5.4"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.5.4" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4540-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "4.6.7"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/4.6.7" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB4670-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
+
+[[variant]]
+version = "5.2.0"
+headers_patch = [
+    { name = "User-Agent", value = "qBittorrent/5.2.0" },
+]
+
+[variant.peer_id_generator.algorithm]
+pattern = "-qB5200-[A-Za-z0-9_~\\(\\)\\!\\.\\*-]{12}"
