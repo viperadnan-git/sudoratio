@@ -53,8 +53,8 @@ impl HttpTrackerConfig {
 /// Configuration for [`crate::Sudoratio`]: announce/bind knobs and seeding simulation.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
-    /// TCP port announced to trackers (`port=` query parameter).
-    pub announce_port: u16,
+    /// Override for the tracker `port=` query parameter. `None` = announce the bound peer-listener port.
+    pub announce_port: Option<u16>,
     /// Min/max simulated **per-torrent upload** rate in **decimal KB/s** (×1000 → bytes/s). Each
     /// active torrent samples an independent cap within this range on refresh.
     pub min_upload_speed: u64,
@@ -89,7 +89,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            announce_port: 51413,
+            announce_port: None,
             min_upload_speed: 150,
             max_upload_speed: 200,
             min_download_speed: 800,

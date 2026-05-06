@@ -199,10 +199,11 @@ impl Engine {
         let bound = self
             .listening_port
             .load(std::sync::atomic::Ordering::Relaxed);
-        let port = overrides.port.unwrap_or(if bound != 0 {
+        let cfg_override = self.config.load().announce_port;
+        let port = overrides.port.or(cfg_override).unwrap_or(if bound != 0 {
             bound
         } else {
-            self.config.load().announce_port
+            crate::DEFAULT_ANNOUNCE_PORT
         });
         let peer_id = self.resolve_announce_peer_id(client, &info_hash_bytes, event)?;
         let tracker_key = self.resolve_announce_key(client, &info_hash_bytes, event)?;

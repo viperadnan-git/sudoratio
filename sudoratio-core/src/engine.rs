@@ -70,6 +70,24 @@ impl Engine {
         self.config.load_full()
     }
 
+    /// Bound peer-listener port; `0` if not bound.
+    pub fn peer_listener_port(&self) -> u16 {
+        self.listening_port.load(Ordering::Relaxed)
+    }
+
+    /// Port the engine announces: `cfg.announce_port` → bound peer-port → [`crate::DEFAULT_ANNOUNCE_PORT`].
+    pub fn resolved_announce_port(&self) -> u16 {
+        if let Some(p) = self.config.load().announce_port {
+            return p;
+        }
+        let bound = self.listening_port.load(Ordering::Relaxed);
+        if bound != 0 {
+            bound
+        } else {
+            crate::DEFAULT_ANNOUNCE_PORT
+        }
+    }
+
     /// Apply a new config atomically. The orchestrator and bandwidth simulator pick up new
     /// values on their next iteration; if `max_active_torrents` increased, idle torrents are
     /// promoted into freshly opened slots before this returns.
@@ -427,7 +445,7 @@ impl Engine {
         crate::wire::spawn_dials(self.clone(), tid.0, out.peers.clone());
     }
 
-    /// Bind the BT peer listener. Idempotent. Bound port overrides `EngineConfig.announce_port`.
+    /// Bind the BT peer listener. Idempotent.
     pub async fn start_peer_listener(
         self: &Arc<Self>,
         bind_addr: SocketAddr,

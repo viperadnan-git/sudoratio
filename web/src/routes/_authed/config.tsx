@@ -2,13 +2,17 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   AlertTriangle,
+  CheckCircle2,
   Cloud,
   Gauge,
   Globe2,
+  Loader2,
   type LucideIcon,
   RotateCcw,
   Save,
+  Wifi,
   X,
+  XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -24,8 +28,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { fetchConfigDefaults, useConfig, useUpdateConfig } from "@/lib/queries";
-import type { ConfigBody, ConfigUpdate } from "@/lib/types";
+import {
+  fetchConfigDefaults,
+  useCheckConnectivity,
+  useConfig,
+  useUpdateConfig,
+} from "@/lib/queries";
+import type { ConfigBody, ConfigUpdate, ConnectivityFamily } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authed/config")({
@@ -141,28 +150,6 @@ function ConfigPage() {
 
       <div className="gap-4 md:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
         <Panel
-          icon={Globe2}
-          title="Network"
-          description="Announce port and concurrency limits."
-        >
-          <Row label="Announce port" hint="1–65535">
-            <NumInput
-              min={1}
-              max={65535}
-              value={draft.announce_port}
-              onChange={setN("announce_port")}
-            />
-          </Row>
-          <Row label="Max concurrent announces" hint="0 = unlimited">
-            <NumInput
-              min={0}
-              value={draft.max_concurrent_announces}
-              onChange={setN("max_concurrent_announces")}
-            />
-          </Row>
-        </Panel>
-
-        <Panel
           icon={Gauge}
           title="Bandwidth"
           description="Per-torrent simulated up/down caps. Decimal KB/s."
@@ -224,6 +211,34 @@ function ConfigPage() {
               onChange={setN("pause_torrent_with_zero_leechers_grace")}
             />
           </Row>
+        </Panel>
+
+        <Panel
+          icon={Globe2}
+          title="Network"
+          description="Announce port and concurrency limits."
+        >
+          <Row
+            label="Announce port"
+            hint="empty = use bound peer-port (default)"
+          >
+            <NumInput
+              min={1}
+              max={65535}
+              value={draft.announce_port}
+              onChange={setNullable("announce_port")}
+              allowEmpty
+              placeholder="auto"
+            />
+          </Row>
+          <Row label="Max concurrent announces" hint="0 = unlimited">
+            <NumInput
+              min={0}
+              value={draft.max_concurrent_announces}
+              onChange={setN("max_concurrent_announces")}
+            />
+          </Row>
+          <ConnectivityRow port={draft.announce_port} dirty={!!dirty} />
         </Panel>
 
         <Panel
@@ -382,6 +397,111 @@ function Row({
         )}
       </div>
       <div className="flex shrink-0 items-center">{children}</div>
+    </div>
+  );
+}
+
+function ConnectivityRow({
+  port,
+  dirty,
+}: {
+  port: number | null;
+  dirty: boolean;
+}) {
+  const probe = useCheckConnectivity();
+  const result = probe.data ?? null;
+
+  const onClick = () => {
+    probe.mutate(port ?? undefined);
+  };
+
+  return (
+    <div className="flex flex-col gap-2 bg-background px-4 py-3 md:px-5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] font-medium leading-tight">
+            Reachability
+          </div>
+          <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider leading-tight text-muted-foreground/70">
+            {dirty ? "save first to test current port" : "probes ifconfig.co"}
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={dirty || probe.isPending}
+          onClick={onClick}
+          className="h-8 shrink-0 gap-1.5 px-3 text-[12px]"
+        >
+          {probe.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" strokeWidth={2} />
+          ) : (
+            <Wifi className="size-3.5" strokeWidth={2} />
+          )}
+          {probe.isPending ? "Probing…" : "Check"}
+        </Button>
+      </div>
+      {result && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-border/70 bg-muted/30 px-3 py-2">
+          <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/70">
+            <span>port {result.port}</span>
+            <span>{new Date(result.checked_at_ms).toLocaleTimeString()}</span>
+          </div>
+          <FamilyLine label="IPv4" family={result.ipv4} />
+          <FamilyLine label="IPv6" family={result.ipv6} />
+        </div>
+      )}
+      {probe.isError && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/[0.06] px-3 py-2 font-mono text-[11px] text-destructive">
+          probe failed:{" "}
+          {probe.error instanceof Error ? probe.error.message : "unknown error"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FamilyLine({
+  label,
+  family,
+}: {
+  label: string;
+  family: ConnectivityFamily;
+}) {
+  const reachable = family.reachable;
+  const detail = family.public_ip ?? family.error ?? "—";
+  return (
+    <div className="flex items-center justify-between gap-3 text-[12px]">
+      <div className="flex items-center gap-1.5">
+        {reachable ? (
+          <CheckCircle2
+            className="size-3.5 text-success"
+            strokeWidth={2}
+            aria-hidden
+          />
+        ) : (
+          <XCircle
+            className="size-3.5 text-destructive/80"
+            strokeWidth={2}
+            aria-hidden
+          />
+        )}
+        <span className="font-mono text-[11px] font-medium uppercase tracking-wider">
+          {label}
+        </span>
+        <span
+          className={cn(
+            "text-[11px] font-medium",
+            reachable ? "text-success" : "text-muted-foreground",
+          )}
+        >
+          {reachable ? "reachable" : "unreachable"}
+        </span>
+      </div>
+      <span className="truncate font-mono text-[11px] text-muted-foreground/80">
+        {detail}
+      </span>
     </div>
   );
 }

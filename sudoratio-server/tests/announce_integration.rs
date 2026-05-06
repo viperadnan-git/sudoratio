@@ -64,7 +64,7 @@ async fn announce_parses_tracker_response() {
     assert!(!meta.trackers.is_empty());
 
     let cfg = EngineConfig {
-        announce_port: 19191,
+        announce_port: Some(19191),
         ..Default::default()
     };
     let h = Engine::new(cfg);

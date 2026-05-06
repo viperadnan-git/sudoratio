@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(peer_addr) => match core.start_peer_listener(peer_addr).await {
                 Ok(port) => tracing::info!(peer_port = port, "BT peer listener up"),
                 Err(e) => {
-                    tracing::warn!(error = %e, "BT peer listener bind failed; falling back to static announce_port")
+                    tracing::warn!(error = %e, "BT peer listener bind failed; inbound peers unreachable")
                 }
             },
             Err(e) => tracing::warn!(error = %e, "--peer-listen invalid; skipping listener"),

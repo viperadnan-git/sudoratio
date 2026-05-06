@@ -104,7 +104,7 @@ export interface SeedingStatus {
 }
 
 export interface ConfigBody {
-  announce_port: number;
+  announce_port: number | null;
   min_upload_speed: number;
   max_upload_speed: number;
   min_download_speed: number;
@@ -124,6 +124,20 @@ export interface ConfigBody {
 }
 
 export type ConfigUpdate = Partial<ConfigBody>;
+
+export interface ConnectivityFamily {
+  reachable: boolean;
+  public_ip: string | null;
+  error: string | null;
+}
+
+export interface ConnectivityResponse {
+  port: number;
+  checked_at_ms: number;
+  ipv4: ConnectivityFamily;
+  ipv6: ConnectivityFamily;
+  via: string;
+}
 
 export interface HealthStatus {
   ok: boolean;

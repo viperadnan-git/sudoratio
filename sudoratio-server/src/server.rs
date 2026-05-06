@@ -23,10 +23,7 @@ fn api_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/config",
             get(routes::config::get_config).patch(routes::config::update_config),
         )
-        .route(
-            "/config/defaults",
-            get(routes::config::get_config_defaults),
-        )
+        .route("/config/defaults", get(routes::config::get_config_defaults))
         .route(
             "/clients",
             get(routes::profiles::list).post(routes::profiles::register),
@@ -64,6 +61,10 @@ fn api_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             post(routes::torrents::resume),
         )
         .route("/stats", get(routes::stats::stats))
+        .route(
+            "/diagnostics/connectivity",
+            post(routes::diagnostics::check_connectivity),
+        )
         .layer(from_fn_with_state(state, auth::require_bearer))
 }
 

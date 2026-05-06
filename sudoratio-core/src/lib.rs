@@ -5,6 +5,9 @@
 
 #![forbid(unsafe_code)]
 
+/// Last-resort fallback for the tracker `port=` query.
+pub const DEFAULT_ANNOUNCE_PORT: u16 = 51413;
+
 mod announce;
 mod bandwidth;
 mod config;

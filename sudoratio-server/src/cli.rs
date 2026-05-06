@@ -17,13 +17,12 @@ pub struct Args {
     #[arg(long, env = "SUDORATIO_LISTEN", default_value = "0.0.0.0:8787")]
     pub listen: String,
 
-    /// Fallback `port=` when the peer listener can't bind. Normally the announced port is
-    /// the listener's actually-bound port.
+    /// Override the tracker `port=`. Unset = announce the bound peer-listener port.
     #[arg(long, env = "SUDORATIO_ANNOUNCE_PORT")]
     pub announce_port: Option<u16>,
 
     /// BT peer-listener bind address. Empty disables.
-    #[arg(long, env = "SUDORATIO_PEER_LISTEN", default_value = "0.0.0.0:0")]
+    #[arg(long, env = "SUDORATIO_PEER_LISTEN", default_value = "[::]:51413")]
     pub peer_listen: String,
 
     #[arg(long, env = "SUDORATIO_MIN_UPLOAD_SPEED")]
@@ -107,7 +106,7 @@ impl Args {
             };
         }
         if let Some(p) = self.announce_port {
-            cfg.announce_port = p;
+            cfg.announce_port = Some(p);
         }
         set!(min_upload_speed);
         set!(max_upload_speed);

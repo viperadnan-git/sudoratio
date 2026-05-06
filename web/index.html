@@ -13,7 +13,7 @@
 		<script>
 			// Sync theme before React mounts to avoid a flash of the wrong theme. Mirrors
 			// THEME_INIT_SCRIPT in src/lib/theme.ts; default = dark.
-			(function () {
+			(() => {
 				try {
 					var t = localStorage.getItem("sudoratio.theme");
 					document.documentElement.classList.toggle("dark", t !== "light");

@@ -62,7 +62,7 @@ pub struct Engine {
     /// Doorbell for engine-driven state transitions (auto-pause, sim-download completion).
     /// Consumer pattern: `engine.state_change_notify.notified().await` then drain via `take_dirty_ids`.
     pub state_change_notify: Arc<Notify>,
-    /// BT peer-listener bound port; `0` = not running. Overrides `config.announce_port`.
+    /// BT peer-listener bound port; `0` = not running.
     pub(crate) listening_port: AtomicU16,
     pub(crate) peer_listener_task: AsyncMutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) dial_global_sem: Arc<Semaphore>,

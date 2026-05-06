@@ -8,7 +8,7 @@ use sudoratio_core::EngineConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigResponse {
-    pub announce_port: u16,
+    pub announce_port: Option<u16>,
     pub min_upload_speed: u64,
     pub max_upload_speed: u64,
     pub min_download_speed: u64,
@@ -81,7 +81,7 @@ impl ConfigResponse {
 /// Partial PATCH body: every field is optional and merged onto the live config.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct ConfigUpdate {
-    pub announce_port: Option<u16>,
+    pub announce_port: Option<Option<u16>>,
     pub min_upload_speed: Option<u64>,
     pub max_upload_speed: Option<u64>,
     pub min_download_speed: Option<u64>,

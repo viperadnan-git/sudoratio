@@ -12,9 +12,14 @@ services:
     restart: unless-stopped
     ports:
       - "${SUDORATIO_PORT:-8787}:8787"
+      # BT peer listener — must be a fixed TCP port and reachable from the internet for
+      # the tracker to mark you "connectable". Forward this on your router / open it in
+      # your cloud security list (Oracle VCN, AWS SG, etc.).
+      - "${SUDORATIO_PEER_PORT:-51413}:51413"
     environment:
       # The clap arg `--password` reads from this env var by default.
       SUDORATIO_PASSWORD: ${SUDORATIO_PASSWORD:?set SUDORATIO_PASSWORD in .env or environment}
+      SUDORATIO_PEER_LISTEN: "[::]:${SUDORATIO_PEER_PORT:-51413}"
       RUST_LOG: ${SUDORATIO_LOG:-sudoratio_server=info,sudoratio_core=info,tower_http=info}
     volumes:
       # Persists config.json + session.sqlite3 across restarts.

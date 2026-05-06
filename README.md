@@ -62,8 +62,8 @@ All flags accept the matching `SUDORATIO_*` environment variable. The most usefu
 | --- | --- | --- | --- |
 | `--listen` | `SUDORATIO_LISTEN` | `0.0.0.0:8787` | HTTP API + UI bind address |
 | `--config-dir` | `SUDORATIO_CONFIG_DIR` | `./data` | session.sqlite3, config.json, clients/*.toml live here |
-| `--peer-listen` | `SUDORATIO_PEER_LISTEN` | `0.0.0.0:0` | BT peer listener (empty disables) |
-| `--announce-port` | `SUDORATIO_ANNOUNCE_PORT` | bound port | Override the `port=` value sent to trackers |
+| `--peer-listen` | `SUDORATIO_PEER_LISTEN` | `[::]:51413` | BT peer listener (dual-stack v4+v6); the bound port is what gets announced to trackers (empty disables; `:0` picks an ephemeral port) |
+| `--announce-port` | `SUDORATIO_ANNOUNCE_PORT` | bound port | Advanced: override the `port=` sent to trackers when port-mapped NAT exposes a different external port |
 | `--max-upload-speed` | `SUDORATIO_MAX_UPLOAD_SPEED` | profile | Cap on simulated upload (bytes/s) |
 | `--upload-ratio-target` | `SUDORATIO_UPLOAD_RATIO_TARGET` | profile | Stop simulating uploads past this ratio |
 | `--max-active-torrents` | `SUDORATIO_MAX_ACTIVE_TORRENTS` | profile | Concurrency ceiling |
@@ -71,6 +71,8 @@ All flags accept the matching `SUDORATIO_*` environment variable. The most usefu
 | `--max-concurrent-announces` | `SUDORATIO_MAX_CONCURRENT_ANNOUNCES` | `0` | Tracker HTTP fan-out limit |
 
 Run `sudoratio-server --help` for the full set, including HTTP client tuning (timeouts, pool sizing, redirects, keepalive). Most of these knobs are also live-tunable through `PATCH /api/config` without a restart.
+
+> **Connectability.** Trackers and peers reach you on the peer-listener port. For that to work it must be open at every layer between the public internet and the process: cloud security list (Oracle VCN / AWS SG / etc.), host firewall (`ufw` / `iptables`), router port-forward (home networks), and any container port mapping. If your ISP uses **CGNAT** (common on mobile/4G/5G and some fiber), no amount of port-forwarding can make you connectable — you'll need a VPS, a VPN with port-forwarding, or to accept reduced peer reachability.
 
 ## Client Profiles
 

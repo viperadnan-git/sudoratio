@@ -169,7 +169,16 @@ function MetricsGrid({ t }: { t: Torrent }) {
       </span>
     );
   })();
-  const ratioEta = (() => {
+  const isDownloading = t.state === "downloading";
+  const etaLabel = isDownloading ? "Download ETA" : "Ratio ETA";
+  const eta = (() => {
+    if (isDownloading) {
+      const left = t.left ?? 0;
+      if (left <= 0) return "—";
+      const dnBps = t.download_speed ?? 0;
+      if (dnBps <= 0) return "∞";
+      return fmtDurationShort(left / dnBps);
+    }
     if (t.state !== "seeding") return "—";
     const target = cfg.data?.upload_ratio_target ?? -1;
     if (target <= 0) return "—";
@@ -245,8 +254,8 @@ function MetricsGrid({ t }: { t: Torrent }) {
       />
       <Stat
         icon={<Target className="size-3" strokeWidth={1.75} />}
-        label="Ratio ETA"
-        value={ratioEta}
+        label={etaLabel}
+        value={eta}
       />
     </div>
   );

@@ -13,6 +13,7 @@ import type {
   ClientProfileSummary,
   ConfigBody,
   ConfigUpdate,
+  ConnectivityResponse,
   HealthStatus,
   SeedingStatus,
   Torrent,
@@ -54,6 +55,16 @@ export function fetchConfigDefaults(qc: QueryClient) {
     queryKey: qk.configDefaults,
     queryFn: () => api<ConfigBody>("/api/v1/config/defaults"),
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+export function useCheckConnectivity() {
+  return useMutation({
+    mutationFn: (port?: number) =>
+      api<ConnectivityResponse>("/api/v1/diagnostics/connectivity", {
+        method: "POST",
+        body: port != null ? { port } : {},
+      }),
   });
 }
 
