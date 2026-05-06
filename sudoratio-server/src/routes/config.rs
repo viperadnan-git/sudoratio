@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use sudoratio_core::ApiErrorBody;
+use sudoratio_core::{ApiErrorBody, EngineConfig};
 
 use crate::config_io::{self, ConfigResponse, ConfigUpdate};
 use crate::error::ApiErrorResponse;
@@ -13,6 +13,10 @@ pub async fn get_config(State(s): State<Arc<AppState>>) -> Json<ConfigResponse> 
     let body = ConfigResponse::from(s.core.current_config().as_ref());
     tracing::info!(announce_port = body.announce_port, "GET /api/v1/config");
     Json(body)
+}
+
+pub async fn get_config_defaults() -> Json<ConfigResponse> {
+    Json(ConfigResponse::from(&EngineConfig::default()))
 }
 
 pub async fn update_config(

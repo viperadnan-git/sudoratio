@@ -21,6 +21,7 @@ import type {
 export const qk = {
   health: ["health"] as const,
   config: ["config"] as const,
+  configDefaults: ["config", "defaults"] as const,
   profiles: ["profiles"] as const,
   stats: ["stats"] as const,
   torrents: (withAnnounces = false) => ["torrents", { withAnnounces }] as const,
@@ -45,6 +46,14 @@ export function useConfig() {
   return useQuery({
     queryKey: qk.config,
     queryFn: () => api<ConfigBody>("/api/v1/config"),
+  });
+}
+
+export function fetchConfigDefaults(qc: QueryClient) {
+  return qc.fetchQuery({
+    queryKey: qk.configDefaults,
+    queryFn: () => api<ConfigBody>("/api/v1/config/defaults"),
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }
 

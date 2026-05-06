@@ -26,7 +26,7 @@ import {
   fmtSpeed,
   shortHash,
 } from "@/lib/format";
-import { useStats, useTorrents } from "@/lib/queries";
+import { useConfig, useStats, useTorrents } from "@/lib/queries";
 import type { Torrent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +103,17 @@ function TorrentsPage() {
   const { selected } = Route.useSearch();
   const { data, isLoading } = useTorrents();
   const stats = useStats();
+  const cfg = useConfig();
+  const ratioTarget = cfg.data?.upload_ratio_target;
+  const pauseOnZL = cfg.data?.pause_torrent_with_zero_leechers;
+  const ratioLabel =
+    ratioTarget === undefined
+      ? null
+      : ratioTarget <= 0
+        ? "target off"
+        : `target ${ratioTarget}×`;
+  const pauseLabel =
+    pauseOnZL === undefined ? null : pauseOnZL ? "0L pause on" : "0L pause off";
   const [sort, setSort] = useState<{
     key: SortKey;
     dir: SortDir;
@@ -146,11 +157,10 @@ function TorrentsPage() {
           icon={<Activity className="size-3" strokeWidth={1.75} />}
           label="Active"
           value={stats.data ? `${stats.data.active_torrents}` : "—"}
-          sub={
-            stats.data
-              ? `of ${stats.data.max_active_torrents} slots`
-              : undefined
-          }
+          sub={joinSub([
+            stats.data ? `of ${stats.data.max_active_torrents} slots` : null,
+            pauseLabel,
+          ])}
         />
         <HeroStat
           icon={<Clock className="size-3" strokeWidth={1.75} />}
@@ -166,7 +176,7 @@ function TorrentsPage() {
           icon={<TrendingUp className="size-3" strokeWidth={1.75} />}
           label="Aggregate up"
           value={fmtSpeed(stats.data?.upload_speed)}
-          sub="across all torrents"
+          sub={joinSub(["across all", ratioLabel])}
         />
         <HeroStat
           icon={<TrendingDown className="size-3" strokeWidth={1.75} />}
@@ -282,6 +292,26 @@ function TorrentsPage() {
 }
 
 /* ───────────────────────── HERO STAT ───────────────────────── */
+
+function joinSub(parts: (string | null | undefined)[]): string | undefined {
+  const kept = parts.filter((p): p is string => !!p);
+  return kept.length === 0 ? undefined : kept.join(" · ");
+}
+
+function ratioColorClass(
+  uploaded?: number | null,
+  size?: number | null,
+): string {
+  const u = uploaded ?? 0;
+  const s = size ?? 0;
+  if (s === 0 || u === 0) return "text-muted-foreground/60";
+  const r = u / s;
+  if (r < 0.05) return "text-muted-foreground/60";
+  if (r < 0.5) return "text-destructive/65";
+  if (r < 1) return "text-amber-500/75";
+  if (r < 2) return "text-success/75";
+  return "text-success/85";
+}
 
 function HeroStat({
   icon,
@@ -436,7 +466,7 @@ function TorrentRow({
         <span className="num text-foreground/80">{fmtBytes(t.size)}</span>
       </Td>
       <Td align="right">
-        <span className="num text-foreground/80">
+        <span className={cn("num", ratioColorClass(t.uploaded, t.size))}>
           {fmtRatio(t.uploaded, t.size)}
         </span>
       </Td>

@@ -367,8 +367,7 @@ function ClientTile({
           {c.editable && " · user"}
         </div>
         {activeVariant && (
-          <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-success">
-            <span className="dot-live" aria-hidden="true" />
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-success">
             {activeVariant.version}
           </span>
         )}
@@ -412,14 +411,17 @@ function VariantDrawer({
     <section className="mt-1.5 overflow-hidden rounded-md border bg-card">
       <header className="flex items-center justify-between border-b px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="eyebrow">Selected</span>
+          <span className="eyebrow hidden sm:inline">Selected</span>
           <span className="num text-[12.5px] font-semibold">{c.client}</span>
           <EditableTag editable={c.editable} />
         </div>
         <div className="flex items-center gap-1">
           <span className="num text-[11px] text-muted-foreground">
-            {c.variants.length}{" "}
-            {c.variants.length === 1 ? "variant" : "variants"}
+            {c.variants.length}
+            <span className="hidden sm:inline">
+              {" "}
+              {c.variants.length === 1 ? "variant" : "variants"}
+            </span>
           </span>
           {c.hasBundled && (
             <Button
@@ -539,8 +541,7 @@ function VariantRow({
       {/* Activate */}
       <div className="flex shrink-0 items-center gap-1">
         {p.active ? (
-          <span className="inline-flex h-7 items-center gap-1 rounded-sm bg-success/15 px-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-success">
-            <span className="dot-live" aria-hidden="true" />
+          <span className="inline-flex h-7 items-center rounded-md bg-success/15 px-2.5 text-[11px] font-semibold text-success">
             Active
           </span>
         ) : (

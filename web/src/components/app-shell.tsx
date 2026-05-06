@@ -14,7 +14,7 @@ import { SessionMenu } from "@/components/session-menu";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { clearToken } from "@/lib/auth";
-import { useStats } from "@/lib/queries";
+import { useProfiles, useStats } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -45,6 +45,8 @@ function fmtRate(bps: number | undefined): string {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const stats = useStats();
+  const profiles = useProfiles();
+  const activeClient = profiles.data?.find((p) => p.active);
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -137,13 +139,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               />
               <span className="brand text-sm">sudoratio</span>
             </Link>
-            {/* breadcrumb / page title (desktop) */}
+            {/* breadcrumb / page title (desktop only) */}
             <div className="hidden items-center gap-2 md:flex">
               <span className="eyebrow">{currentLabel(location.pathname)}</span>
             </div>
 
-            {/* live telemetry badges (desktop only) */}
-            <div className="ml-auto flex items-center gap-1.5 md:gap-2">
+            {/* live telemetry badges + active client (right side) */}
+            <div className="ml-auto flex min-w-0 items-center gap-1.5 md:gap-2">
               <div className="hidden items-center gap-1.5 md:flex md:gap-2">
                 <TelemetryPill
                   label="ACTIVE"
@@ -162,6 +164,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   value={`${fmtRate(stats.data?.download_speed)}B/s`}
                 />
               </div>
+
+              {activeClient && (
+                <Link
+                  to="/clients"
+                  title={`Active client · ${activeClient.id}`}
+                  className="group inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-border/70 px-2 transition-colors hover:border-foreground/30 hover:bg-accent/40"
+                >
+                  <UserSquare2
+                    className="size-3 shrink-0 text-muted-foreground group-hover:text-foreground"
+                    strokeWidth={1.75}
+                  />
+                  <span className="num truncate text-[11px] font-medium leading-none">
+                    {activeClient.client}
+                  </span>
+                  <span className="num shrink-0 text-[10px] leading-none text-muted-foreground">
+                    v{activeClient.version}
+                  </span>
+                </Link>
+              )}
 
               {/* Mobile-only session menu — keeps theme + logout reachable */}
               <div className="md:hidden">

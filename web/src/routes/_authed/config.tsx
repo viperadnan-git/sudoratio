@@ -1,5 +1,15 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Save } from "lucide-react";
+import {
+  AlertTriangle,
+  Cloud,
+  Gauge,
+  Globe2,
+  type LucideIcon,
+  RotateCcw,
+  Save,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -14,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useConfig, useUpdateConfig } from "@/lib/queries";
+import { fetchConfigDefaults, useConfig, useUpdateConfig } from "@/lib/queries";
 import type { ConfigBody, ConfigUpdate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -25,10 +35,25 @@ export const Route = createFileRoute("/_authed/config")({
 function ConfigPage() {
   const cfg = useConfig();
   const update = useUpdateConfig();
+  const qc = useQueryClient();
   const [draft, setDraft] = useState<ConfigBody | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const dirty =
     cfg.data && draft && Object.keys(diff(cfg.data, draft)).length > 0;
+
+  const onReset = async () => {
+    setResetting(true);
+    try {
+      const defaults = await fetchConfigDefaults(qc);
+      setDraft(defaults);
+      toast.message("Defaults loaded · review and click Save");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "fetch defaults failed");
+    } finally {
+      setResetting(false);
+    }
+  };
 
   useEffect(() => {
     if (cfg.data && !draft) setDraft(cfg.data);
@@ -68,15 +93,18 @@ function ConfigPage() {
 
   const set = <K extends keyof ConfigBody>(k: K, v: ConfigBody[K]) =>
     setDraft((d) => (d ? { ...d, [k]: v } : d));
-
-  const num = (v: string): number => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  };
+  const setN =
+    <K extends keyof ConfigBody>(k: K) =>
+    (v: number | null) =>
+      set(k, (v ?? 0) as ConfigBody[K]);
+  const setNullable =
+    <K extends keyof ConfigBody>(k: K) =>
+    (v: number | null) =>
+      set(k, v as ConfigBody[K]);
 
   return (
     <form onSubmit={onReview} className="px-3 pb-12 pt-4 md:px-6 md:pt-6">
-      <header className="mb-5 flex items-end justify-between gap-4 md:mb-7">
+      <header className="mb-5 flex flex-col items-start gap-3 md:mb-7 md:flex-row md:items-end md:justify-between md:gap-4">
         <div>
           <div className="eyebrow mb-1.5">Operations · Config</div>
           <h1 className="text-[22px] font-semibold leading-tight tracking-tight md:text-[28px]">
@@ -86,179 +114,192 @@ function ConfigPage() {
             changes apply live · no restart required, unless noted
           </p>
         </div>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={update.isPending || !dirty}
-          className="h-8 gap-1.5 px-3 text-[12px]"
-        >
-          <Save className="size-3.5" strokeWidth={2} />
-          {update.isPending ? "Saving…" : dirty ? "Save · live" : "Saved"}
-        </Button>
+        <div className="flex w-full items-center gap-2 md:w-auto">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={!dirty || update.isPending}
+            onClick={() => setDraft(cfg.data ?? null)}
+            title="Discard unsaved changes"
+            className="h-8 flex-1 gap-1.5 px-3 text-[12px] md:flex-none"
+          >
+            <X className="size-3.5" strokeWidth={2} />
+            Clear
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={update.isPending || !dirty}
+            className="h-8 flex-1 gap-1.5 px-3 text-[12px] md:flex-none"
+          >
+            <Save className="size-3.5" strokeWidth={2} />
+            {update.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
+          </Button>
+        </div>
       </header>
 
-      <div className="space-y-5">
+      <div className="gap-4 md:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
         <Panel
-          eyebrow="Section · 01"
+          icon={Globe2}
           title="Network"
           description="Announce port and concurrency limits."
         >
-          <Field label="Announce port">
-            <Input
-              type="number"
+          <Row label="Announce port" hint="1–65535">
+            <NumInput
               min={1}
               max={65535}
               value={draft.announce_port}
-              onChange={(e) => set("announce_port", num(e.target.value))}
-              className="font-mono"
+              onChange={setN("announce_port")}
             />
-          </Field>
-          <Field label="Max concurrent announces" hint="0 = unlimited">
-            <Input
-              type="number"
+          </Row>
+          <Row label="Max concurrent announces" hint="0 = unlimited">
+            <NumInput
               min={0}
               value={draft.max_concurrent_announces}
-              onChange={(e) =>
-                set("max_concurrent_announces", num(e.target.value))
-              }
-              className="font-mono"
+              onChange={setN("max_concurrent_announces")}
             />
-          </Field>
+          </Row>
         </Panel>
 
         <Panel
-          eyebrow="Section · 02"
+          icon={Gauge}
           title="Bandwidth"
-          description="Per-torrent simulated up/down caps in decimal KB/s."
+          description="Per-torrent simulated up/down caps. Decimal KB/s."
         >
-          <Field label="Min upload" hint="KB/s">
-            <Input
-              type="number"
-              min={0}
-              value={draft.min_upload_speed}
-              onChange={(e) => set("min_upload_speed", num(e.target.value))}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Max upload" hint="KB/s">
-            <Input
-              type="number"
-              min={0}
-              value={draft.max_upload_speed}
-              onChange={(e) => set("max_upload_speed", num(e.target.value))}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Min download" hint="KB/s">
-            <Input
-              type="number"
-              min={0}
-              value={draft.min_download_speed}
-              onChange={(e) => set("min_download_speed", num(e.target.value))}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Max download" hint="KB/s">
-            <Input
-              type="number"
-              min={0}
-              value={draft.max_download_speed}
-              onChange={(e) => set("max_download_speed", num(e.target.value))}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Bandwidth tick" hint="ms" className="md:col-span-2">
-            <Input
-              type="number"
+          <RangeRow
+            label="Upload range"
+            hint="min · max · KB/s"
+            minValue={draft.min_upload_speed}
+            maxValue={draft.max_upload_speed}
+            onMin={setN("min_upload_speed")}
+            onMax={setN("max_upload_speed")}
+          />
+          <RangeRow
+            label="Download range"
+            hint="min · max · KB/s"
+            minValue={draft.min_download_speed}
+            maxValue={draft.max_download_speed}
+            onMin={setN("min_download_speed")}
+            onMax={setN("max_download_speed")}
+          />
+          <Row label="Bandwidth tick" hint="ms">
+            <NumInput
               min={1}
               value={draft.bandwidth_tick_ms}
-              onChange={(e) => set("bandwidth_tick_ms", num(e.target.value))}
-              className="font-mono"
+              onChange={setN("bandwidth_tick_ms")}
             />
-          </Field>
+          </Row>
         </Panel>
 
         <Panel
-          eyebrow="Section · 03"
+          icon={RotateCcw}
           title="Lifecycle"
           description="Active-slot cap, ratio target, eviction policy."
         >
-          <Field label="Max active torrents">
-            <Input
-              type="number"
+          <Row label="Max active torrents">
+            <NumInput
               min={1}
               value={draft.max_active_torrents}
-              onChange={(e) => set("max_active_torrents", num(e.target.value))}
-              className="font-mono"
+              onChange={setN("max_active_torrents")}
             />
-          </Field>
-          <Field
-            label="Upload ratio target"
-            hint="-1 to disable; 1.0 = fully seeded"
-          >
-            <Input
-              type="number"
+          </Row>
+          <Row label="Upload ratio target" hint="-1 disables · 1.0 = full">
+            <NumInput
               step="0.1"
               value={draft.upload_ratio_target}
-              onChange={(e) => set("upload_ratio_target", num(e.target.value))}
-              className="font-mono"
+              onChange={setN("upload_ratio_target")}
             />
-          </Field>
-          <Toggle
-            label="Pause torrent with zero leechers"
-            hint="when on, auto-pause torrents whose swarm reports no leechers"
+          </Row>
+          <ToggleRow
+            label="Pause on zero leechers"
+            hint="auto-pause when swarm reports no leechers"
             checked={draft.pause_torrent_with_zero_leechers}
             onChange={(v) => set("pause_torrent_with_zero_leechers", v)}
           />
-          <Field
-            label="Zero-leechers grace"
-            hint="seconds to wait before pause; resets if a leecher reappears"
-          >
-            <Input
-              type="number"
+          <Row label="Zero-leechers grace" hint="seconds before pause">
+            <NumInput
+              min={0}
               value={draft.pause_torrent_with_zero_leechers_grace}
-              onChange={(e) =>
-                set(
-                  "pause_torrent_with_zero_leechers_grace",
-                  num(e.target.value),
-                )
-              }
-              className="font-mono"
+              onChange={setN("pause_torrent_with_zero_leechers_grace")}
             />
-          </Field>
+          </Row>
         </Panel>
 
         <Panel
-          eyebrow="Section · 04"
+          icon={Cloud}
           title="Tracker HTTP client"
-          description="Optional reqwest knobs · read at startup, restart to apply."
+          description="Reqwest knobs · read at startup, restart to apply."
           muted
         >
           {(
             [
-              ["http_tracker_connect_timeout_secs", "Connect timeout", "s"],
-              ["http_tracker_request_timeout_secs", "Request timeout", "s"],
-              ["http_tracker_max_idle_per_host", "Max idle / host", ""],
-              ["http_tracker_max_redirects", "Max redirects", ""],
-              ["http_tracker_tcp_keepalive_secs", "TCP keepalive", "s"],
-              ["http_tracker_pool_idle_timeout_secs", "Pool idle timeout", "s"],
+              [
+                "http_tracker_connect_timeout_secs",
+                "Connect timeout",
+                "seconds",
+              ],
+              [
+                "http_tracker_request_timeout_secs",
+                "Request timeout",
+                "seconds",
+              ],
+              ["http_tracker_max_idle_per_host", "Max idle / host", "count"],
+              ["http_tracker_max_redirects", "Max redirects", "count"],
+              ["http_tracker_tcp_keepalive_secs", "TCP keepalive", "seconds"],
+              [
+                "http_tracker_pool_idle_timeout_secs",
+                "Pool idle timeout",
+                "seconds",
+              ],
             ] as const
           ).map(([k, label, hint]) => (
-            <Field key={k} label={label} hint={hint}>
-              <Input
-                type="number"
+            <Row key={k} label={label} hint={hint}>
+              <NumInput
                 min={0}
-                value={draft[k] ?? ""}
                 placeholder="default"
-                onChange={(e) => {
-                  const v = e.target.value;
-                  set(k, v === "" ? null : num(v));
-                }}
-                className="font-mono"
+                value={draft[k] ?? ""}
+                onChange={setNullable(k)}
+                allowEmpty
               />
-            </Field>
+            </Row>
           ))}
         </Panel>
+
+        <section className="@container flex flex-col overflow-hidden rounded-md border border-destructive/30 bg-destructive/[0.03]">
+          <header className="flex items-center gap-2 border-b border-destructive/20 px-4 py-2.5 md:px-5">
+            <span
+              className="inline-flex size-5 items-center justify-center rounded-sm bg-destructive/15 text-destructive"
+              aria-hidden="true"
+            >
+              <AlertTriangle className="size-3" strokeWidth={1.75} />
+            </span>
+            <h2 className="text-[13px] font-semibold leading-none tracking-tight text-destructive">
+              Danger zone
+            </h2>
+          </header>
+          <div className="flex flex-col items-start gap-3 bg-background px-4 py-3 md:px-5 @md:flex-row @md:items-center @md:justify-between">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium leading-tight">
+                Reset to engine defaults
+              </div>
+              <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/70">
+                loads compile-time defaults · review and save
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={resetting || update.isPending}
+              onClick={onReset}
+              className="h-8 shrink-0 gap-1.5 border-destructive/40 px-3 text-[12px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <RotateCcw className="size-3.5" strokeWidth={2} />
+              {resetting ? "Loading…" : "Reset to defaults"}
+            </Button>
+          </div>
+        </section>
       </div>
 
       <ConfirmChangesDialog
@@ -272,6 +313,222 @@ function ConfigPage() {
     </form>
   );
 }
+
+/* ─────────────────── Panel + row primitives ─────────────────── */
+
+function Panel({
+  icon: Icon,
+  title,
+  description,
+  children,
+  muted,
+  className,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  muted?: boolean;
+  className?: string;
+}) {
+  return (
+    <section
+      className={cn(
+        "@container flex flex-col overflow-hidden rounded-md border bg-card",
+        muted && "bg-card/40",
+        className,
+      )}
+    >
+      <header className="flex flex-col gap-1 border-b px-4 py-2.5 @md:flex-row @md:items-center @md:justify-between @md:gap-3 md:px-5">
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className="inline-flex size-5 items-center justify-center rounded-sm bg-muted text-muted-foreground"
+            aria-hidden="true"
+          >
+            <Icon className="size-3" strokeWidth={1.75} />
+          </span>
+          <h2 className="text-[13px] font-semibold leading-none tracking-tight">
+            {title}
+          </h2>
+        </div>
+        {description && (
+          <p className="font-mono text-[10.5px] leading-tight text-muted-foreground/70 @md:min-w-0 @md:truncate @md:leading-none @md:text-right">
+            {description}
+          </p>
+        )}
+      </header>
+      <div className="flex-1 divide-y divide-border">{children}</div>
+    </section>
+  );
+}
+
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-[3.25rem] items-center justify-between gap-4 bg-background px-4 py-2.5 md:px-5">
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium leading-tight">{label}</div>
+        {hint && (
+          <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider leading-tight text-muted-foreground/70">
+            {hint}
+          </div>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center">{children}</div>
+    </div>
+  );
+}
+
+function RangeRow({
+  label,
+  hint,
+  minValue,
+  maxValue,
+  onMin,
+  onMax,
+}: {
+  label: string;
+  hint?: string;
+  minValue: number;
+  maxValue: number;
+  onMin: (v: number | null) => void;
+  onMax: (v: number | null) => void;
+}) {
+  return (
+    <div className="flex min-h-[3.25rem] items-center justify-between gap-4 bg-background px-4 py-2.5 md:px-5">
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium leading-tight">{label}</div>
+        <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-wider leading-tight text-muted-foreground/70">
+          {hint ?? "min · max"}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <NumInput min={0} value={minValue} onChange={onMin} />
+        <span
+          className="font-mono text-[11px] text-muted-foreground/60"
+          aria-hidden="true"
+        >
+          —
+        </span>
+        <NumInput min={0} value={maxValue} onChange={onMax} />
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex min-h-[3.25rem] w-full items-center gap-3 bg-background px-4 py-2.5 text-left transition-colors hover:bg-accent/40 md:px-5"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-[12.5px] font-medium leading-tight">{label}</div>
+        {hint && (
+          <div className="mt-0.5 font-mono text-[10.5px] leading-tight text-muted-foreground/80">
+            {hint}
+          </div>
+        )}
+      </div>
+      <span
+        className={cn(
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors",
+          checked ? "border-success bg-success" : "border-border bg-muted",
+        )}
+        aria-hidden="true"
+      >
+        <span
+          className={cn(
+            "inline-block size-3.5 rounded-full bg-background shadow-sm transition-transform",
+            checked ? "translate-x-[1.125rem]" : "translate-x-[0.125rem]",
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
+type NumInputProps = {
+  value: number | string | null;
+  onChange: (v: number | null) => void;
+  min?: number;
+  max?: number;
+  step?: string;
+  placeholder?: string;
+  allowEmpty?: boolean;
+};
+
+function NumInput({
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  placeholder,
+  allowEmpty,
+}: NumInputProps) {
+  const canonical = value === null || value === undefined ? "" : String(value);
+  const [text, setText] = useState(canonical);
+  // Sync from outside when parent value changes and our buffer is in a
+  // committed (parsed) state — never clobber the user's mid-typing input.
+  useEffect(() => {
+    if (text === "" || text === "-" || text.endsWith(".")) return;
+    if (Number(text) !== Number(canonical)) setText(canonical);
+  }, [canonical, text]);
+  const commit = (raw: string) => {
+    if (raw === "" || raw === "-") {
+      onChange(allowEmpty ? null : 0);
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isFinite(n)) onChange(n);
+  };
+  return (
+    <Input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!/^-?\d*\.?\d*$/.test(v)) return;
+        setText(v);
+        commit(v);
+      }}
+      onBlur={() => {
+        if (text === "" || text === "-") {
+          setText(canonical);
+        }
+      }}
+      data-min={min}
+      data-max={max}
+      data-step={step}
+      className="h-8 w-[9ch] px-2 text-right font-mono text-[12px] tabular-nums"
+    />
+  );
+}
+
+/* ─────────────────── Confirm dialog (unchanged) ─────────────────── */
 
 function ConfirmChangesDialog({
   open,
@@ -334,117 +591,6 @@ function fmtVal(v: unknown): string {
   if (v === null || v === undefined) return "default";
   if (typeof v === "boolean") return v ? "on" : "off";
   return String(v);
-}
-
-function Panel({
-  eyebrow,
-  title,
-  description,
-  children,
-  muted,
-}: {
-  eyebrow: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-  muted?: boolean;
-}) {
-  return (
-    <section
-      className={cn(
-        "overflow-hidden rounded-md border bg-card",
-        muted && "bg-card/40",
-      )}
-    >
-      <header className="flex flex-col gap-1 border-b px-4 py-3 md:flex-row md:items-baseline md:justify-between md:gap-6 md:px-5">
-        <div>
-          <div className="eyebrow mb-1">{eyebrow}</div>
-          <h2 className="text-[14px] font-semibold leading-tight">{title}</h2>
-        </div>
-        {description && (
-          <p className="font-mono text-[11px] text-muted-foreground md:text-right">
-            {description}
-          </p>
-        )}
-      </header>
-      <div className="grid grid-cols-1 gap-px bg-border md:grid-cols-2">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-  className,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn("flex flex-col gap-2 bg-background p-4 md:p-5", className)}
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="eyebrow">{label}</span>
-        {hint && (
-          <span className="font-mono text-[10px] text-muted-foreground/70">
-            {hint}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="flex items-center justify-between gap-4 bg-background p-4 text-left transition-colors hover:bg-accent/40 md:p-5"
-    >
-      <div className="min-w-0">
-        <div className="text-[13px] font-medium">{label}</div>
-        {hint && (
-          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-            {hint}
-          </div>
-        )}
-      </div>
-      <span
-        className={cn(
-          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors",
-          checked ? "border-success bg-success" : "border-border bg-muted",
-        )}
-        aria-hidden="true"
-      >
-        <span
-          className={cn(
-            "inline-block size-3.5 rounded-full bg-background shadow-sm transition-transform",
-            checked ? "translate-x-[1.125rem]" : "translate-x-[0.125rem]",
-          )}
-        />
-      </span>
-    </button>
-  );
 }
 
 function diff(prev: ConfigBody, next: ConfigBody): ConfigUpdate {

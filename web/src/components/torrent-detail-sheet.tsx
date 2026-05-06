@@ -6,6 +6,7 @@ import {
   HardDrive,
   RefreshCw,
   Scale,
+  Target,
   Timer,
   TrendingDown,
   TrendingUp,
@@ -30,11 +31,12 @@ import { useNow } from "@/hooks/use-now";
 import {
   fmtBytes,
   fmtCountdown,
+  fmtDurationShort,
   fmtRatio,
   fmtRelativeTime,
   fmtSpeed,
 } from "@/lib/format";
-import { useTorrent, useTorrentAnnounces } from "@/lib/queries";
+import { useConfig, useTorrent, useTorrentAnnounces } from "@/lib/queries";
 import type { AnnouncesPage, AnnounceTrace, Torrent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -147,11 +149,38 @@ export function TorrentDetailSheet({ infoHash, onClose }: Props) {
 
 function MetricsGrid({ t }: { t: Torrent }) {
   const now = useNow();
+  const cfg = useConfig();
   const isActive = t.state === "downloading" || t.state === "seeding";
   const nextAnnounce = (() => {
     if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
     const next = t.last_announced_at + t.announce_interval * 1000;
     return fmtCountdown(next - now);
+  })();
+  const intervalLabel = (() => {
+    if (!t.announce_interval) return "—";
+    return (
+      <span className="inline-flex items-baseline gap-1.5">
+        <span>{t.announce_interval}s</span>
+        {t.min_announce_interval ? (
+          <span className="text-[10px] text-muted-foreground/60">
+            {t.min_announce_interval}s
+          </span>
+        ) : null}
+      </span>
+    );
+  })();
+  const ratioEta = (() => {
+    if (t.state !== "seeding") return "—";
+    const target = cfg.data?.upload_ratio_target ?? -1;
+    if (target <= 0) return "—";
+    const size = t.size ?? 0;
+    const uploaded = t.uploaded ?? 0;
+    if (size <= 0) return "—";
+    const remaining = target * size - uploaded;
+    if (remaining <= 0) return "reached";
+    const upBps = t.upload_speed ?? 0;
+    if (upBps <= 0) return "∞";
+    return fmtDurationShort(remaining / upBps);
   })();
 
   return (
@@ -212,12 +241,12 @@ function MetricsGrid({ t }: { t: Torrent }) {
       <Stat
         icon={<RefreshCw className="size-3" strokeWidth={1.75} />}
         label="Interval"
-        value={t.announce_interval ? `${t.announce_interval}s` : "—"}
+        value={intervalLabel}
       />
       <Stat
-        icon={<RefreshCw className="size-3" strokeWidth={1.75} />}
-        label="Min interval"
-        value={t.min_announce_interval ? `${t.min_announce_interval}s` : "—"}
+        icon={<Target className="size-3" strokeWidth={1.75} />}
+        label="Ratio ETA"
+        value={ratioEta}
       />
     </div>
   );

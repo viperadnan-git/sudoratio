@@ -8,7 +8,7 @@ export interface DiffListItem {
 
 export function DiffList({ items }: { items: DiffListItem[] }) {
   return (
-    <ul className="divide-y rounded-md border bg-card/40 font-mono text-[11.5px]">
+    <ul className="max-h-[min(60vh,24rem)] divide-y overflow-y-auto rounded-md border bg-card/40 font-mono text-[11.5px]">
       {items.map((it) => (
         <li
           key={it.key}

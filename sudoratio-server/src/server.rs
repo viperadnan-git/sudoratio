@@ -24,6 +24,10 @@ fn api_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(routes::config::get_config).patch(routes::config::update_config),
         )
         .route(
+            "/config/defaults",
+            get(routes::config::get_config_defaults),
+        )
+        .route(
             "/clients",
             get(routes::profiles::list).post(routes::profiles::register),
         )
