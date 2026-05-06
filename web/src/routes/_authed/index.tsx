@@ -1,13 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Activity,
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ChevronUp,
   Clock,
   Inbox,
-  Timer,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -114,6 +111,12 @@ function TorrentsPage() {
         : `target ${ratioTarget}×`;
   const pauseLabel =
     pauseOnZL === undefined ? null : pauseOnZL ? "0L pause on" : "0L pause off";
+  const downloading = (data ?? []).filter((t) => t.state === "downloading");
+  const totalLeft = downloading.reduce((sum, t) => sum + (t.left ?? 0), 0);
+  const downloadSub =
+    downloading.length === 0
+      ? null
+      : `${downloading.length} active · ${fmtBytes(totalLeft)} left`;
   const [sort, setSort] = useState<{
     key: SortKey;
     dir: SortDir;
@@ -157,10 +160,10 @@ function TorrentsPage() {
           icon={<Activity className="size-3" strokeWidth={1.75} />}
           label="Active"
           value={stats.data ? `${stats.data.active_torrents}` : "—"}
-          sub={joinSub([
-            stats.data ? `of ${stats.data.max_active_torrents} slots` : null,
-            pauseLabel,
-          ])}
+          valueSuffix={
+            stats.data ? `/ ${stats.data.max_active_torrents}` : undefined
+          }
+          sub={pauseLabel ?? undefined}
         />
         <HeroStat
           icon={<Clock className="size-3" strokeWidth={1.75} />}
@@ -168,7 +171,7 @@ function TorrentsPage() {
           value={stats.data ? `${stats.data.waiting_torrents}` : "—"}
           sub={
             stats.data
-              ? `${stats.data.tracked_metainfo_torrents} tracked`
+              ? `of ${stats.data.tracked_metainfo_torrents} total`
               : undefined
           }
         />
@@ -176,13 +179,13 @@ function TorrentsPage() {
           icon={<TrendingUp className="size-3" strokeWidth={1.75} />}
           label="Aggregate up"
           value={fmtSpeed(stats.data?.upload_speed)}
-          sub={joinSub(["across all", ratioLabel])}
+          sub={ratioLabel ?? undefined}
         />
         <HeroStat
           icon={<TrendingDown className="size-3" strokeWidth={1.75} />}
           label="Aggregate down"
           value={fmtSpeed(stats.data?.download_speed)}
-          sub="across all torrents"
+          sub={downloadSub ?? undefined}
         />
       </section>
 
@@ -306,7 +309,7 @@ function ratioColorClass(
   const s = size ?? 0;
   if (s === 0 || u === 0) return "text-muted-foreground/60";
   const r = u / s;
-  if (r < 0.05) return "text-muted-foreground/60";
+  if (r < 0.01) return "text-muted-foreground/60";
   if (r < 0.5) return "text-destructive/65";
   if (r < 1) return "text-amber-500/75";
   if (r < 2) return "text-success/75";
@@ -317,11 +320,14 @@ function HeroStat({
   icon,
   label,
   value,
+  valueSuffix,
   sub,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  /** Smaller, muted text rendered immediately after the main value (e.g., "of 5"). */
+  valueSuffix?: string;
   sub?: string;
 }) {
   return (
@@ -330,8 +336,13 @@ function HeroStat({
         {icon}
         <span className="eyebrow">{label}</span>
       </div>
-      <div className="num text-[24px] font-semibold leading-none tracking-tight md:text-[28px]">
-        {value}
+      <div className="num flex items-baseline gap-1.5 text-[24px] font-semibold leading-none tracking-tight md:text-[28px]">
+        <span>{value}</span>
+        {valueSuffix && (
+          <span className="text-[14px] font-medium text-muted-foreground/70 md:text-[15px]">
+            {valueSuffix}
+          </span>
+        )}
       </div>
       {sub && (
         <div className="font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/80">
@@ -524,25 +535,32 @@ function TorrentCard({
     if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
     return fmtCountdown(t.last_announced_at + t.announce_interval * 1000 - now);
   })();
+  const railColor = stateRailColor(t);
+  const upBps = t.upload_speed ?? 0;
+  const dnBps = t.download_speed ?? 0;
 
   return (
     <li>
       <button
         type="button"
         onClick={() => onOpen(t.info_hash)}
-        className="block w-full rounded-md border bg-card p-3.5 text-left transition-colors hover:bg-accent/40"
+        className="group relative block w-full overflow-hidden rounded-md border bg-card pl-[10px] pr-2.5 py-2.5 text-left transition-colors hover:bg-accent/40 active:bg-accent/60"
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="truncate text-[13.5px] font-medium leading-tight">
-              {t.name}
-            </div>
-            <div className="num text-[11px] text-muted-foreground">
-              {shortHash(t.info_hash)}
-            </div>
+        {/* Left state rail. Full height, 3px wide, color encodes state. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"
+          style={{ background: railColor }}
+        />
+
+        {/* Line 1 — name + actions */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1 truncate text-[13.5px] font-medium leading-tight">
+            {t.name}
           </div>
           {/** biome-ignore lint/a11y/noStaticElementInteractions: action wrapper inside clickable card */}
           <div
+            className="-mr-1 shrink-0"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
@@ -550,65 +568,82 @@ function TorrentCard({
           </div>
         </div>
 
-        <div className="my-3 hairline" />
-
-        <div className="flex items-center justify-between gap-2">
+        {/* Line 2 — single horizontal metric strip with `·` separators. */}
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 num text-[11px] text-muted-foreground">
           <TorrentStatusBadge t={t} />
-          <span className="num text-[11px] text-muted-foreground">
-            {fmtBytes(t.size)} · {fmtRatio(t.uploaded, t.size)}× ·{" "}
-            {t.seeders ?? "—"}/{t.leechers ?? "—"}
+          <Sep />
+          <span className="text-foreground/80">{fmtBytes(t.size)}</span>
+          <Sep />
+          <span className={cn("font-medium", ratioColorClass(t.uploaded, t.size))}>
+            {fmtRatio(t.uploaded, t.size)}×
           </span>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-1.5">
-          <Mini
-            icon={<ArrowUp className="size-3" strokeWidth={2} />}
-            value={fmtSpeed(t.upload_speed)}
-            color="success"
-          />
-          <Mini
-            icon={<ArrowDown className="size-3" strokeWidth={2} />}
-            value={fmtSpeed(t.download_speed)}
-            color="signal"
-          />
-          <Mini
-            icon={<Timer className="size-3" strokeWidth={2} />}
-            value={nextCountdown}
-          />
+          <Sep />
+          <span
+            className={cn(
+              "inline-flex items-center gap-0.5",
+              upBps > 0 && "text-success",
+            )}
+          >
+            <span aria-hidden>↑</span>
+            <span>{compactSpeed(upBps)}</span>
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-0.5",
+              dnBps > 0 && "text-signal",
+            )}
+          >
+            <span aria-hidden>↓</span>
+            <span>{compactSpeed(dnBps)}</span>
+          </span>
+          <Sep />
+          <span className="tabular-nums">
+            {t.seeders ?? "—"}
+            <span className="text-muted-foreground/50">/</span>
+            {t.leechers ?? "—"}
+          </span>
+          <Sep />
+          <span className="tabular-nums">{nextCountdown}</span>
         </div>
       </button>
     </li>
   );
 }
 
-function Mini({
-  label,
-  icon,
-  value,
-  color,
-}: {
-  label?: string;
-  icon?: React.ReactNode;
-  value: string;
-  color?: "success" | "signal";
-}) {
+function Sep() {
   return (
-    <div className="rounded-sm border bg-background/60 px-2 py-1.5">
-      <div
-        className={cn(
-          "flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground",
-          color === "success" && "text-success",
-          color === "signal" && "text-signal",
-        )}
-      >
-        {icon}
-        {label && <span>{label}</span>}
-      </div>
-      <div className="num mt-0.5 text-[12px] font-medium text-foreground/90">
-        {value}
-      </div>
-    </div>
+    <span aria-hidden="true" className="text-muted-foreground/40">
+      ·
+    </span>
   );
+}
+
+/** Map torrent state → CSS-var color used by the left rail. */
+function stateRailColor(t: Torrent): string {
+  switch (t.state) {
+    case "seeding":
+      return "var(--success)";
+    case "downloading":
+      return "var(--signal)";
+    case "queued":
+      return "var(--muted-foreground)";
+    case "stopped":
+      switch (t.reason) {
+        case "tracker_failed":
+          return "var(--destructive)";
+        case "upload_ratio":
+        case "no_leechers":
+          return "var(--warn)";
+        default:
+          return "var(--muted-foreground)";
+      }
+  }
+}
+
+/** Compact speed: drop "/s" suffix and zero-pad to keep strip width stable. */
+function compactSpeed(bps: number): string {
+  if (!bps) return "0";
+  return fmtSpeed(bps).replace(/\s?\/s$/, "");
 }
 
 /* ───────────────────────── EMPTY ───────────────────────── */

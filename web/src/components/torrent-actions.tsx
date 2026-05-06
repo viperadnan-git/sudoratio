@@ -1,7 +1,23 @@
-import { MoreHorizontal, Pause, Play, Radio, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Radio,
+  Trash2,
+} from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,11 +33,14 @@ import {
 } from "@/lib/queries";
 import type { Torrent } from "@/lib/types";
 
+type ConfirmKind = "announce" | "delete";
+
 export function TorrentActions({ t }: { t: Torrent }) {
   const pause = usePauseTorrent();
   const resume = useResumeTorrent();
   const del = useDeleteTorrent();
   const announce = useAnnounceTorrent();
+  const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
 
   if (!t.info_hash) return null;
   const ih = t.info_hash;
@@ -39,61 +58,170 @@ export function TorrentActions({ t }: { t: Torrent }) {
       }
     };
 
+  const onConfirmAnnounce = async () => {
+    await wrap(
+      (v: { infoHash: string; event: "none" }) => announce.mutateAsync(v),
+      "Announce dispatched",
+    )({ infoHash: ih, event: "none" });
+    setConfirm(null);
+  };
+
+  const onConfirmDelete = async () => {
+    await wrap(del.mutateAsync, "Removed")(ih);
+    setConfirm(null);
+  };
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label="Torrent actions"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            aria-label="Torrent actions"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreHorizontal className="size-4" strokeWidth={1.75} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="min-w-[12rem] font-mono text-[12px]"
           onClick={(e) => e.stopPropagation()}
         >
-          <MoreHorizontal className="size-4" strokeWidth={1.75} />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className="min-w-[12rem] font-mono text-[12px]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {isPaused ? (
+          {isPaused ? (
+            <DropdownMenuItem
+              onClick={() => wrap(resume.mutateAsync, "Resumed")(ih)}
+            >
+              <Play className="size-3.5" strokeWidth={1.75} />
+              Resume
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onClick={() => wrap(pause.mutateAsync, "Paused")(ih)}
+            >
+              <Pause className="size-3.5" strokeWidth={1.75} />
+              Pause
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
-            onClick={() => wrap(resume.mutateAsync, "Resumed")(ih)}
+            disabled={!isActive}
+            onClick={() => setConfirm("announce")}
           >
-            <Play className="size-3.5" strokeWidth={1.75} />
-            Resume
+            <Radio className="size-3.5" strokeWidth={1.75} />
+            Announce now
           </DropdownMenuItem>
-        ) : (
+          <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={() => wrap(pause.mutateAsync, "Paused")(ih)}
+            variant="destructive"
+            onClick={() => setConfirm("delete")}
           >
-            <Pause className="size-3.5" strokeWidth={1.75} />
-            Pause
+            <Trash2 className="size-3.5" strokeWidth={1.75} />
+            Delete
           </DropdownMenuItem>
-        )}
-        <DropdownMenuItem
-          disabled={!isActive}
-          onClick={() =>
-            wrap(
-              (v: { infoHash: string; event: "none" }) =>
-                announce.mutateAsync(v),
-              "Announce dispatched",
-            )({ infoHash: ih, event: "none" })
-          }
-        >
-          <Radio className="size-3.5" strokeWidth={1.75} />
-          Announce now
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          onClick={() => wrap(del.mutateAsync, "Removed")(ih)}
-        >
-          <Trash2 className="size-3.5" strokeWidth={1.75} />
-          Delete
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <ConfirmDialog
+        kind="announce"
+        open={confirm === "announce"}
+        torrentName={t.name}
+        pending={announce.isPending}
+        onCancel={() => setConfirm(null)}
+        onConfirm={onConfirmAnnounce}
+      />
+      <ConfirmDialog
+        kind="delete"
+        open={confirm === "delete"}
+        torrentName={t.name}
+        pending={del.isPending}
+        onCancel={() => setConfirm(null)}
+        onConfirm={onConfirmDelete}
+      />
+    </>
+  );
+}
+
+function ConfirmDialog({
+  kind,
+  open,
+  torrentName,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  kind: ConfirmKind;
+  open: boolean;
+  torrentName: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const meta =
+    kind === "delete"
+      ? {
+          eyebrow: "Danger · Delete",
+          title: "Delete torrent?",
+          description:
+            "Removes the torrent from the engine and sends a final stopped announce. Persisted history is purged. This cannot be undone.",
+          confirmLabel: "Delete",
+          confirmPending: "Deleting…",
+          confirmVariant: "destructive" as const,
+          icon: <AlertTriangle className="size-3.5" strokeWidth={2} />,
+        }
+      : {
+          eyebrow: "Action · Announce",
+          title: "Announce now?",
+          description:
+            "Triggers an immediate tracker announce outside the normal interval. Use sparingly — some private trackers throttle or warn on excessive manual announces.",
+          confirmLabel: "Announce",
+          confirmPending: "Dispatching…",
+          confirmVariant: "default" as const,
+          icon: <Radio className="size-3.5" strokeWidth={2} />,
+        };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && !pending && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <span className="eyebrow-strong">{meta.eyebrow}</span>
+          <DialogTitle className="text-base font-semibold">
+            {meta.title}
+          </DialogTitle>
+          <DialogDescription className="text-[12px]">
+            {meta.description}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2">
+          <div className="font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/70">
+            Torrent
+          </div>
+          <div className="mt-0.5 truncate text-[12.5px] font-medium">
+            {torrentName}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={pending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant={meta.confirmVariant}
+            onClick={onConfirm}
+            disabled={pending}
+            className="gap-1.5"
+          >
+            {meta.icon}
+            {pending ? meta.confirmPending : meta.confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

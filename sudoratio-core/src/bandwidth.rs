@@ -60,7 +60,7 @@ fn sample_speed_range(min: u64, max: u64) -> u64 {
 /// Multiplicative noise applied per-tick to the held cap so reported throughput fluctuates
 /// instead of plateauing at a constant value. Guarantees:
 /// 1. Sign is randomly chosen (up or down).
-/// 2. Magnitude is in the range \[5%, 30%\] of the cap — the dead zone around zero is excluded.
+/// 2. Magnitude is uniform in \[1%, 10%\] of the cap — the dead zone around zero is excluded.
 /// 3. Result is clamped to \[`min`, `max`\] so a bound-tight cap (e.g. `min == max`) never
 ///    exceeds the configured ceiling or drops below the floor.
 /// 4. If integer truncation would collapse the result back onto `cap`, the value is nudged by

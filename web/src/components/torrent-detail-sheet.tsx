@@ -110,7 +110,7 @@ export function TorrentDetailSheet({ infoHash, onClose }: Props) {
               {torrent.isLoading ? "Loading torrent…" : "Torrent not found."}
             </p>
           ) : (
-            <div className="flex flex-col">
+            <div className="flex flex-col pb-24 md:pb-12 [@supports(padding:env(safe-area-inset-bottom))]:pb-[max(6rem,env(safe-area-inset-bottom)+1.5rem)] [@supports(padding:env(safe-area-inset-bottom))]:md:pb-[max(3rem,env(safe-area-inset-bottom)+1rem)]">
               {/* Status row */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3">
                 <TorrentStatusBadge t={t} />
