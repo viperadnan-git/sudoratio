@@ -87,16 +87,7 @@ impl Engine {
             tokio::task::spawn_blocking(move || db.save_preset(&snap)).await??;
         } else {
             for p in presets {
-                let preset = Arc::new(crate::preset::Preset {
-                    id: p.id.clone(),
-                    name: parking_lot::RwLock::new(p.name.clone()),
-                    color: parking_lot::RwLock::new(p.color.clone()),
-                    is_default: p.is_default,
-                    policy: Arc::new(arc_swap::ArcSwap::from_pointee(p.policy.clone())),
-                    created_at_ms: p.created_at_ms,
-                    updated_at_ms: parking_lot::RwLock::new(p.updated_at_ms),
-                });
-                self.presets.insert(preset);
+                self.presets.insert(crate::preset::Preset::from_snapshot(p));
             }
             self.presets.ensure_default();
         }
@@ -219,14 +210,23 @@ impl Engine {
         Ok(preset)
     }
 
-    fn persist_preset(&self, preset: &Arc<Preset>) {
-        let snap = preset.snapshot();
+    /// Fire-and-forget DB write on the blocking pool. Logs and swallows errors —
+    /// safe because every state change has an in-memory source-of-truth.
+    fn spawn_db<F>(&self, label: &'static str, f: F)
+    where
+        F: FnOnce(&Persistence) -> anyhow::Result<()> + Send + 'static,
+    {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = db.save_preset(&snap) {
-                tracing::warn!(error = %e, "preset persist failed");
+            if let Err(e) = f(&db) {
+                tracing::warn!(error = %e, op = label, "db write failed");
             }
         });
+    }
+
+    fn persist_preset(&self, preset: &Arc<Preset>) {
+        let snap = preset.snapshot();
+        self.spawn_db("save_preset", move |db| db.save_preset(&snap));
     }
 
     fn persist_torrent(&self, tid: TorrentId) {
@@ -234,12 +234,7 @@ impl Engine {
             return;
         };
         self.clear_dirty(tid);
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = db.save_torrent(&t) {
-                tracing::warn!(error = %e, "torrent persist failed");
-            }
-        });
+        self.spawn_db("save_torrent", move |db| db.save_torrent(&t));
     }
 
     /// Live-apply a policy patch. All torrents using this preset see the new caps on next
@@ -313,12 +308,7 @@ impl Engine {
         }
         self.presets.remove(id)?;
         let id_owned = id.to_string();
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = db.delete_preset(&id_owned) {
-                tracing::warn!(error = %e, "preset delete persist failed");
-            }
-        });
+        self.spawn_db("delete_preset", move |db| db.delete_preset(&id_owned));
         Ok(())
     }
 
@@ -872,10 +862,34 @@ impl Engine {
         while set.join_next().await.is_some() {}
     }
 
-    /// Lightweight per-preset rollup. Walks the torrent map ONCE and groups by preset id —
-    /// O(N) where N is total torrents. Returned map covers every preset (zero counts when
-    /// no torrents are assigned). Reuse the same call for both `/presets` listing and
-    /// chip-strip totals — no duplicate scans.
+    /// Fold the torrent map once with an optional preset filter. Single source of truth
+    /// for `preset_rollups`, `preset_rollup`, `stats`, and `stats_for_preset`.
+    fn fold_torrents(&self, filter: Option<&str>) -> PresetRollup {
+        let mut acc = PresetRollup::default();
+        for r in self.torrents.iter() {
+            if filter.is_some_and(|f| r.value().preset_id() != f) {
+                continue;
+            }
+            acc.torrent_count += 1;
+            match r.lifecycle() {
+                TorrentState::Downloading | TorrentState::Seeding => {
+                    acc.active_count += 1;
+                    let id = *r.key();
+                    acc.upload_speed_bps = acc
+                        .upload_speed_bps
+                        .saturating_add(self.bandwidth.upload_speed_for(id));
+                    acc.download_speed_bps = acc
+                        .download_speed_bps
+                        .saturating_add(self.bandwidth.download_speed_for(id));
+                }
+                TorrentState::Queued => acc.queued_count += 1,
+                TorrentState::Stopped(_) => {}
+            }
+        }
+        acc
+    }
+
+    /// Per-preset rollups for ALL presets (single O(N) walk). Used by `/presets` list.
     pub fn preset_rollups(&self) -> std::collections::HashMap<String, PresetRollup> {
         let mut out: std::collections::HashMap<String, PresetRollup> = self
             .presets
@@ -884,53 +898,37 @@ impl Engine {
             .map(|p| (p.id.clone(), PresetRollup::default()))
             .collect();
         for r in self.torrents.iter() {
-            let pid = r.value().preset_id();
-            let entry = out.entry(pid).or_default();
+            let entry = out.entry(r.value().preset_id()).or_default();
             entry.torrent_count += 1;
-            match r.value().lifecycle() {
+            match r.lifecycle() {
                 TorrentState::Downloading | TorrentState::Seeding => {
                     entry.active_count += 1;
                     let id = *r.key();
-                    entry.upload_speed_bps =
-                        entry.upload_speed_bps.saturating_add(self.bandwidth.upload_speed_for(id));
+                    entry.upload_speed_bps = entry
+                        .upload_speed_bps
+                        .saturating_add(self.bandwidth.upload_speed_for(id));
                     entry.download_speed_bps = entry
                         .download_speed_bps
                         .saturating_add(self.bandwidth.download_speed_for(id));
                 }
-                TorrentState::Queued => {
-                    entry.queued_count += 1;
-                }
+                TorrentState::Queued => entry.queued_count += 1,
                 TorrentState::Stopped(_) => {}
             }
         }
         out
     }
 
-    /// Scoped stats: when `preset_id = Some(id)`, only torrents in that preset are counted
-    /// and only their speeds summed. `max_active_torrents` becomes the preset's slot cap.
+    /// Cheap single-preset rollup. Walks once, filtered. Used by `/presets/{id}`.
+    pub fn preset_rollup(&self, preset_id: &str) -> PresetRollup {
+        self.fold_torrents(Some(preset_id))
+    }
+
+    /// Scoped stats: when `preset_id = Some(id)`, only torrents in that preset are counted.
     pub async fn stats_for_preset(&self, preset_id: Option<&str>) -> SeedingStatus {
         let Some(filter) = preset_id else {
             return self.stats().await;
         };
-        let mut active = 0usize;
-        let mut waiting = 0usize;
-        let mut metainfo_count = 0usize;
-        let mut up = 0u64;
-        let mut down = 0u64;
-        for r in self.torrents.iter() {
-            if r.value().preset_id() != filter {
-                continue;
-            }
-            metainfo_count += 1;
-            match r.lifecycle() {
-                TorrentState::Downloading | TorrentState::Seeding => active += 1,
-                TorrentState::Queued => waiting += 1,
-                TorrentState::Stopped(_) => {}
-            }
-            let id = *r.key();
-            up = up.saturating_add(self.bandwidth.upload_speed_for(id));
-            down = down.saturating_add(self.bandwidth.download_speed_for(id));
-        }
+        let r = self.fold_torrents(Some(filter));
         let cap = self
             .presets
             .get(filter)
@@ -938,27 +936,17 @@ impl Engine {
             .unwrap_or(1);
         SeedingStatus {
             running: !self.shutting_down.load(Ordering::SeqCst),
-            upload_speed: up,
-            download_speed: down,
+            upload_speed: r.upload_speed_bps,
+            download_speed: r.download_speed_bps,
             max_active_torrents: cap,
-            active_torrents: active,
-            waiting_torrents: waiting,
-            tracked_metainfo_torrents: metainfo_count,
+            active_torrents: r.active_count,
+            waiting_torrents: r.queued_count,
+            tracked_metainfo_torrents: r.torrent_count,
         }
     }
 
     pub async fn stats(&self) -> SeedingStatus {
-        let mut active = 0usize;
-        let mut waiting = 0usize;
-        let mut metainfo_count = 0usize;
-        for r in self.torrents.iter() {
-            metainfo_count += 1;
-            match r.lifecycle() {
-                TorrentState::Downloading | TorrentState::Seeding => active += 1,
-                TorrentState::Queued => waiting += 1,
-                TorrentState::Stopped(_) => {}
-            }
-        }
+        let r = self.fold_torrents(None);
         let max_active_total: usize = self
             .presets
             .list()
@@ -967,12 +955,12 @@ impl Engine {
             .sum();
         SeedingStatus {
             running: !self.shutting_down.load(Ordering::SeqCst),
-            upload_speed: self.bandwidth.total_upload_speed(),
-            download_speed: self.bandwidth.global_download_speed(),
+            upload_speed: r.upload_speed_bps,
+            download_speed: r.download_speed_bps,
             max_active_torrents: max_active_total,
-            active_torrents: active,
-            waiting_torrents: waiting,
-            tracked_metainfo_torrents: metainfo_count,
+            active_torrents: r.active_count,
+            waiting_torrents: r.queued_count,
+            tracked_metainfo_torrents: r.torrent_count,
         }
     }
 
@@ -1039,12 +1027,7 @@ impl Engine {
         });
         scheduler::remove_torrent(self, id).await?;
         if let Some(h) = info_hash {
-            let db = self.db.clone();
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) = db.delete_torrent(&h) {
-                    tracing::warn!(error = %e, "torrent delete persist failed");
-                }
-            });
+            self.spawn_db("delete_torrent", move |db| db.delete_torrent(&h));
         }
         Ok(())
     }

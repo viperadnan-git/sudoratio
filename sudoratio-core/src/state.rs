@@ -160,16 +160,17 @@ impl Engine {
 
     /// Forward an announce trace to the embedder sink (optional) and persist to SQLite.
     pub(crate) fn emit_announce_trace(&self, tid: TorrentId, trace: AnnounceTrace) {
-        // Persist trace + torrent state.
         if let Some(t) = self.export_torrent(tid) {
             if let Some(info_hash) = t.info_hash.clone() {
                 let db = self.db.clone();
                 let trace_clone = trace.clone();
-                let t_clone = t.clone();
-                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                    db.save_torrent(&t_clone)?;
-                    db.append_announce(&info_hash, &trace_clone)?;
-                    Ok(())
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = db
+                        .save_torrent(&t)
+                        .and_then(|_| db.append_announce(&info_hash, &trace_clone))
+                    {
+                        tracing::warn!(error = %e, "post-announce persist failed");
+                    }
                 });
             }
             self.clear_dirty(tid);

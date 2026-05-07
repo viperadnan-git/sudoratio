@@ -287,19 +287,22 @@ function TorrentsPage() {
               <table className="w-full text-[12.5px]">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
+                    <SortableTh sortKey="name" sort={sort} onSort={onSort}>
+                      Name
+                    </SortableTh>
+                    {activeId === "all" && (
+                      <Th className="w-[150px]">Preset</Th>
+                    )}
                     <SortableTh
-                      className="w-[34%]"
-                      sortKey="name"
+                      className="w-[120px]"
+                      sortKey="state"
                       sort={sort}
                       onSort={onSort}
                     >
-                      Name
-                    </SortableTh>
-                    {activeId === "all" && <Th className="w-[14%]">Preset</Th>}
-                    <SortableTh sortKey="state" sort={sort} onSort={onSort}>
                       Status
                     </SortableTh>
                     <SortableTh
+                      className="w-[88px]"
                       align="right"
                       sortKey="size"
                       sort={sort}
@@ -308,6 +311,7 @@ function TorrentsPage() {
                       Size
                     </SortableTh>
                     <SortableTh
+                      className="w-[72px]"
                       align="right"
                       sortKey="ratio"
                       sort={sort}
@@ -316,6 +320,7 @@ function TorrentsPage() {
                       Ratio
                     </SortableTh>
                     <SortableTh
+                      className="w-[88px]"
                       align="right"
                       sortKey="upload_speed"
                       sort={sort}
@@ -324,6 +329,7 @@ function TorrentsPage() {
                       ↑
                     </SortableTh>
                     <SortableTh
+                      className="w-[88px]"
                       align="right"
                       sortKey="download_speed"
                       sort={sort}
@@ -332,6 +338,7 @@ function TorrentsPage() {
                       ↓
                     </SortableTh>
                     <SortableTh
+                      className="w-[80px]"
                       align="right"
                       sortKey="swarm"
                       sort={sort}
@@ -340,6 +347,7 @@ function TorrentsPage() {
                       S / L
                     </SortableTh>
                     <SortableTh
+                      className="w-[80px]"
                       align="right"
                       sortKey="next"
                       sort={sort}
@@ -347,7 +355,7 @@ function TorrentsPage() {
                     >
                       Next
                     </SortableTh>
-                    <Th className="w-[40px]" />
+                    <Th className="w-[44px]" />
                   </tr>
                 </thead>
                 <tbody>
@@ -499,16 +507,19 @@ function Td({
   children,
   align = "left",
   className,
+  nowrap,
 }: {
   children?: React.ReactNode;
   align?: "left" | "right";
   className?: string;
+  nowrap?: boolean;
 }) {
   return (
     <td
       className={cn(
         "px-3 py-2.5 align-middle",
         align === "right" && "text-right",
+        nowrap && "whitespace-nowrap",
         className,
       )}
     >
@@ -542,7 +553,7 @@ function TorrentRow({
       className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-accent/40"
       onClick={() => onOpen(t.info_hash)}
     >
-      <Td>
+      <Td className="max-w-0">
         <div className="flex items-center gap-2">
           {!showPresetCol && preset && (
             <span
@@ -555,12 +566,12 @@ function TorrentRow({
             {t.name}
           </span>
         </div>
-        <div className="num mt-0.5 text-[11px] text-muted-foreground">
+        <div className="num mt-0.5 truncate text-[11px] text-muted-foreground">
           {shortHash(t.info_hash)}
         </div>
       </Td>
       {showPresetCol && (
-        <Td>
+        <Td nowrap>
           {preset ? (
             <PresetPill color={preset.color} name={preset.name} />
           ) : (
@@ -570,33 +581,33 @@ function TorrentRow({
           )}
         </Td>
       )}
-      <Td>
+      <Td nowrap>
         <TorrentStatusBadge t={t} />
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span className="num text-foreground/80">{fmtBytes(t.size)}</span>
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span className={cn("num", ratioColorClass(t.uploaded, t.size))}>
           {fmtRatio(t.uploaded, t.size)}
         </span>
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span className="num text-foreground/80">
           {fmtSpeed(t.upload_speed)}
         </span>
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span className="num text-foreground/80">
           {fmtSpeed(t.download_speed)}
         </span>
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span className="num text-foreground/80">
           {t.seeders ?? "—"} / {t.leechers ?? "—"}
         </span>
       </Td>
-      <Td align="right">
+      <Td align="right" nowrap>
         <span
           className={cn(
             "num tabular-nums",

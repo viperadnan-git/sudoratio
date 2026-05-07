@@ -43,14 +43,9 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> Result<Json<PresetWithRollup>, ApiErrorResponse> {
     let preset = s.core.get_preset(&id).ok_or_else(|| not_found(&id))?;
-    let rollup = s
-        .core
-        .preset_rollups()
-        .remove(&id)
-        .unwrap_or_default();
     Ok(Json(PresetWithRollup {
         preset: preset.snapshot(),
-        rollup,
+        rollup: s.core.preset_rollup(&id),
     }))
 }
 

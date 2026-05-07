@@ -281,22 +281,6 @@ impl BandwidthDispatcher {
             .unwrap_or(0)
     }
 
-    /// Sum of per-torrent simulated upload rates.
-    pub fn total_upload_speed(&self) -> u64 {
-        self.torrents
-            .iter()
-            .map(|e| e.upload_speed.load(Ordering::Relaxed))
-            .sum()
-    }
-
-    /// Sum of per-torrent simulated download rates.
-    pub fn global_download_speed(&self) -> u64 {
-        self.torrents
-            .iter()
-            .map(|e| e.download_speed.load(Ordering::Relaxed))
-            .sum()
-    }
-
     pub(crate) fn download_speed_pairs(&self) -> Vec<(TorrentId, u64)> {
         self.torrents
             .iter()

@@ -66,38 +66,19 @@ pub struct PresetPolicyUpdate {
 
 impl PresetPolicyUpdate {
     pub fn merge(self, p: &mut PresetPolicy) {
-        if let Some(v) = self.min_upload_speed {
-            p.min_upload_speed = v;
-        }
-        if let Some(v) = self.max_upload_speed {
-            p.max_upload_speed = v;
-        }
-        if let Some(v) = self.min_download_speed {
-            p.min_download_speed = v;
-        }
-        if let Some(v) = self.max_download_speed {
-            p.max_download_speed = v;
-        }
+        macro_rules! set { ($f:ident) => { if let Some(v) = self.$f { p.$f = v; } } }
+        set!(min_upload_speed);
+        set!(max_upload_speed);
+        set!(min_download_speed);
+        set!(max_download_speed);
+        set!(upload_ratio_target);
+        set!(pause_torrent_with_zero_leechers);
+        set!(pause_torrent_with_zero_leechers_grace);
+        set!(min_swarm_seeders_to_seed);
+        set!(max_announce_jitter);
+        set!(client_profile_id);
         if let Some(v) = self.max_active_torrents {
             p.max_active_torrents = v.max(1);
-        }
-        if let Some(v) = self.upload_ratio_target {
-            p.upload_ratio_target = v;
-        }
-        if let Some(v) = self.pause_torrent_with_zero_leechers {
-            p.pause_torrent_with_zero_leechers = v;
-        }
-        if let Some(v) = self.pause_torrent_with_zero_leechers_grace {
-            p.pause_torrent_with_zero_leechers_grace = v;
-        }
-        if let Some(v) = self.min_swarm_seeders_to_seed {
-            p.min_swarm_seeders_to_seed = v;
-        }
-        if let Some(v) = self.max_announce_jitter {
-            p.max_announce_jitter = v;
-        }
-        if let Some(v) = self.client_profile_id {
-            p.client_profile_id = v;
         }
         if p.max_upload_speed < p.min_upload_speed {
             std::mem::swap(&mut p.min_upload_speed, &mut p.max_upload_speed);
@@ -120,6 +101,19 @@ pub struct Preset {
 }
 
 impl Preset {
+    /// Symmetric inverse of `snapshot()` — used by SQLite restore on engine boot.
+    pub fn from_snapshot(s: PresetSnapshot) -> Arc<Self> {
+        Arc::new(Self {
+            id: s.id,
+            name: parking_lot::RwLock::new(s.name),
+            color: parking_lot::RwLock::new(s.color),
+            is_default: s.is_default,
+            policy: Arc::new(ArcSwap::from_pointee(s.policy)),
+            created_at_ms: s.created_at_ms,
+            updated_at_ms: parking_lot::RwLock::new(s.updated_at_ms),
+        })
+    }
+
     pub fn snapshot(&self) -> PresetSnapshot {
         PresetSnapshot {
             id: self.id.clone(),

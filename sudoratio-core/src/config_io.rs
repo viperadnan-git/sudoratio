@@ -70,32 +70,32 @@ pub struct ConfigUpdate {
 
 impl ConfigUpdate {
     pub fn apply(self, cfg: &mut EngineConfig) {
-        if let Some(v) = self.announce_port {
-            cfg.announce_port = v;
-        }
+        macro_rules! set { ($f:ident, $dst:expr) => { if let Some(v) = self.$f { $dst = v; } } }
+        set!(announce_port, cfg.announce_port);
+        set!(max_concurrent_announces, cfg.max_concurrent_announces);
+        set!(
+            http_tracker_connect_timeout_secs,
+            cfg.http_tracker.connect_timeout_secs
+        );
+        set!(
+            http_tracker_request_timeout_secs,
+            cfg.http_tracker.request_timeout_secs
+        );
+        set!(
+            http_tracker_max_idle_per_host,
+            cfg.http_tracker.max_idle_per_host
+        );
+        set!(http_tracker_max_redirects, cfg.http_tracker.max_redirects);
+        set!(
+            http_tracker_tcp_keepalive_secs,
+            cfg.http_tracker.tcp_keepalive_secs
+        );
+        set!(
+            http_tracker_pool_idle_timeout_secs,
+            cfg.http_tracker.pool_idle_timeout_secs
+        );
         if let Some(v) = self.bandwidth_tick_ms {
             cfg.bandwidth_tick_ms = v.max(1);
-        }
-        if let Some(v) = self.max_concurrent_announces {
-            cfg.max_concurrent_announces = v;
-        }
-        if let Some(v) = self.http_tracker_connect_timeout_secs {
-            cfg.http_tracker.connect_timeout_secs = v;
-        }
-        if let Some(v) = self.http_tracker_request_timeout_secs {
-            cfg.http_tracker.request_timeout_secs = v;
-        }
-        if let Some(v) = self.http_tracker_max_idle_per_host {
-            cfg.http_tracker.max_idle_per_host = v;
-        }
-        if let Some(v) = self.http_tracker_max_redirects {
-            cfg.http_tracker.max_redirects = v;
-        }
-        if let Some(v) = self.http_tracker_tcp_keepalive_secs {
-            cfg.http_tracker.tcp_keepalive_secs = v;
-        }
-        if let Some(v) = self.http_tracker_pool_idle_timeout_secs {
-            cfg.http_tracker.pool_idle_timeout_secs = v;
         }
     }
 }

@@ -119,7 +119,7 @@ export function TorrentActions({ t }: { t: Torrent }) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setPickerOpen(true)}>
             <MoveRight className="size-3.5" strokeWidth={1.75} />
-            Move to preset…
+            Change preset
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

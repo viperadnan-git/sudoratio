@@ -255,7 +255,7 @@ impl Persistence {
                 .map(parse_stop_reason);
             let state = parse_state(&row.get::<_, String>(9)?, reason)?;
             let min_iv: Option<i64> = row.get(13)?;
-            let info_hash_bytes = decode_info_hash(&info_hash);
+            let info_hash_bytes = Some(id.0);
             let preset_id: String = row.get(23)?;
             out.push(Torrent {
                 id,
@@ -456,11 +456,3 @@ fn parse_event(s: &str) -> Result<AnnounceEvent> {
     }
 }
 
-fn decode_info_hash(s: &str) -> Option<[u8; 20]> {
-    if s.len() != 40 {
-        return None;
-    }
-    let mut bytes = [0u8; 20];
-    hex::decode_to_slice(s, &mut bytes).ok()?;
-    Some(bytes)
-}
