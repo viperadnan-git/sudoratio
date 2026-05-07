@@ -377,6 +377,7 @@ fn parse_stop_reason(s: &str) -> StopReason {
     match s {
         "upload_ratio" => StopReason::UploadRatio,
         "no_leechers" => StopReason::NoLeechers,
+        "tiny_swarm" => StopReason::TinySwarm,
         "tracker_failed" => StopReason::TrackerFailed,
         _ => StopReason::User,
     }

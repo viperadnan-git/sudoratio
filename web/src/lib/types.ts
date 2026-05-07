@@ -114,6 +114,8 @@ export interface ConfigBody {
   pause_torrent_with_zero_leechers: boolean;
   pause_torrent_with_zero_leechers_grace: number;
   bandwidth_tick_ms: number;
+  max_announce_jitter: number;
+  min_swarm_seeders_to_seed: number;
   max_concurrent_announces: number;
   http_tracker_connect_timeout_secs: number | null;
   http_tracker_request_timeout_secs: number | null;

@@ -20,6 +20,18 @@ use crate::torrent::{
 
 const MAX_CONSECUTIVE_FAILS: u32 = 5;
 
+pub(crate) fn should_pause_tiny_swarm(inner: &Engine, tid: TorrentId) -> bool {
+    let min = inner.config.load().min_swarm_seeders_to_seed;
+    if min == 0 {
+        return false;
+    }
+    let Some(e) = inner.torrents.get(&tid) else {
+        return false;
+    };
+    let seeders = e.with_state(|s| s.last_seeders);
+    matches!(seeders, Some(n) if n < min)
+}
+
 pub(crate) fn should_pause_no_leechers(inner: &Engine, tid: TorrentId) -> bool {
     let cfg = inner.config.load();
     if !cfg.pause_torrent_with_zero_leechers {
@@ -40,11 +52,19 @@ pub(crate) fn should_pause_no_leechers(inner: &Engine, tid: TorrentId) -> bool {
     elapsed_secs >= cfg.pause_torrent_with_zero_leechers_grace
 }
 
-/// BEP-3: wait at least `max(interval, min_interval)` before the next periodic announce.
-fn tracker_reschedule_delay_secs(out: &crate::torrent::AnnounceOutcome) -> u32 {
+fn tracker_reschedule_delay_secs(
+    out: &crate::torrent::AnnounceOutcome,
+    jitter_max_secs: u32,
+) -> u32 {
     let iv = out.announce_interval.unwrap_or(5);
     let mi = out.min_interval.unwrap_or(0);
-    iv.max(mi).max(1)
+    let base = iv.max(mi).max(1);
+    if jitter_max_secs == 0 {
+        return base;
+    }
+    let mut rng = rand::rng();
+    let extra = rand::Rng::random_range(&mut rng, 0..=jitter_max_secs);
+    base.saturating_add(extra)
 }
 
 async fn delay_schedule(
@@ -161,6 +181,10 @@ fn upload_ratio_applies(inner: &Engine, tid: TorrentId) -> bool {
 /// successful announce. Returns `true` if the torrent has been auto-paused
 /// and the caller should NOT schedule the next announce.
 async fn maybe_auto_pause(inner: &Engine, tid: TorrentId) -> bool {
+    if should_pause_tiny_swarm(inner, tid) {
+        auto_pause(inner, tid, StopReason::TinySwarm).await;
+        return true;
+    }
     if should_pause_no_leechers(inner, tid) {
         auto_pause(inner, tid, StopReason::NoLeechers).await;
         return true;
@@ -198,7 +222,8 @@ async fn handle_queued_announce(inner: Arc<Engine>, tid: TorrentId, ev: Announce
                 return;
             }
             inner.reset_consecutive_fails(tid);
-            let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out)));
+            let jitter = inner.config.load().max_announce_jitter;
+            let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out, jitter)));
             delay_schedule(&inner, tid, AnnounceEvent::None, iv).await;
         }
         (

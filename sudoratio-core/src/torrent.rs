@@ -109,6 +109,7 @@ pub enum StopReason {
     User,
     UploadRatio,
     NoLeechers,
+    TinySwarm,
     TrackerFailed,
 }
 
@@ -118,6 +119,7 @@ impl StopReason {
             Self::User => "user",
             Self::UploadRatio => "upload_ratio",
             Self::NoLeechers => "no_leechers",
+            Self::TinySwarm => "tiny_swarm",
             Self::TrackerFailed => "tracker_failed",
         }
     }

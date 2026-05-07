@@ -76,6 +76,10 @@ pub struct EngineConfig {
     pub pause_torrent_with_zero_leechers_grace: u64,
     /// Bandwidth simulator tick interval (5000 ms).
     pub bandwidth_tick_ms: u64,
+    /// Max additional random delay (seconds) added on top of tracker `interval`. `0` disables.
+    pub max_announce_jitter: u32,
+    /// Auto-pause when scrape reports fewer seeders than this. `0` disables.
+    pub min_swarm_seeders_to_seed: u32,
     pub http_tracker: HttpTrackerConfig,
     /// Cap concurrent in-flight tracker HTTP announces (`0` = unlimited).
     pub max_concurrent_announces: usize,
@@ -90,15 +94,17 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             announce_port: None,
-            min_upload_speed: 150,
-            max_upload_speed: 200,
+            min_upload_speed: 27,
+            max_upload_speed: 183,
             min_download_speed: 800,
             max_download_speed: 1200,
             max_active_torrents: 5,
-            upload_ratio_target: -1.0,
+            upload_ratio_target: 3.0,
             pause_torrent_with_zero_leechers: false,
             pause_torrent_with_zero_leechers_grace: 3 * 60 * 60,
             bandwidth_tick_ms: 5000,
+            max_announce_jitter: 8,
+            min_swarm_seeders_to_seed: 0,
             http_tracker: HttpTrackerConfig::default(),
             max_concurrent_announces: 16,
             outbound_dial_enabled: true,

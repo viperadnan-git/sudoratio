@@ -18,6 +18,8 @@ pub struct ConfigResponse {
     pub pause_torrent_with_zero_leechers: bool,
     pub pause_torrent_with_zero_leechers_grace: u64,
     pub bandwidth_tick_ms: u64,
+    pub max_announce_jitter: u32,
+    pub min_swarm_seeders_to_seed: u32,
     pub max_concurrent_announces: usize,
     pub http_tracker_connect_timeout_secs: Option<u64>,
     pub http_tracker_request_timeout_secs: Option<u64>,
@@ -40,6 +42,8 @@ impl From<&EngineConfig> for ConfigResponse {
             pause_torrent_with_zero_leechers: c.pause_torrent_with_zero_leechers,
             pause_torrent_with_zero_leechers_grace: c.pause_torrent_with_zero_leechers_grace,
             bandwidth_tick_ms: c.bandwidth_tick_ms,
+            max_announce_jitter: c.max_announce_jitter,
+            min_swarm_seeders_to_seed: c.min_swarm_seeders_to_seed,
             max_concurrent_announces: c.max_concurrent_announces,
             http_tracker_connect_timeout_secs: c.http_tracker.connect_timeout_secs,
             http_tracker_request_timeout_secs: c.http_tracker.request_timeout_secs,
@@ -64,6 +68,8 @@ impl ConfigResponse {
             pause_torrent_with_zero_leechers: self.pause_torrent_with_zero_leechers,
             pause_torrent_with_zero_leechers_grace: self.pause_torrent_with_zero_leechers_grace,
             bandwidth_tick_ms: self.bandwidth_tick_ms.max(1),
+            max_announce_jitter: self.max_announce_jitter,
+            min_swarm_seeders_to_seed: self.min_swarm_seeders_to_seed,
             max_concurrent_announces: self.max_concurrent_announces,
             http_tracker: sudoratio_core::HttpTrackerConfig {
                 connect_timeout_secs: self.http_tracker_connect_timeout_secs,
@@ -91,6 +97,8 @@ pub struct ConfigUpdate {
     pub pause_torrent_with_zero_leechers: Option<bool>,
     pub pause_torrent_with_zero_leechers_grace: Option<u64>,
     pub bandwidth_tick_ms: Option<u64>,
+    pub max_announce_jitter: Option<u32>,
+    pub min_swarm_seeders_to_seed: Option<u32>,
     pub max_concurrent_announces: Option<usize>,
     pub http_tracker_connect_timeout_secs: Option<Option<u64>>,
     pub http_tracker_request_timeout_secs: Option<Option<u64>>,
@@ -135,6 +143,12 @@ impl ConfigUpdate {
         if let Some(v) = self.bandwidth_tick_ms {
             cfg.bandwidth_tick_ms = v.max(1);
         }
+        if let Some(v) = self.max_announce_jitter {
+            cfg.max_announce_jitter = v;
+        }
+        if let Some(v) = self.min_swarm_seeders_to_seed {
+            cfg.min_swarm_seeders_to_seed = v;
+        }
         if let Some(v) = self.max_concurrent_announces {
             cfg.max_concurrent_announces = v;
         }
@@ -175,7 +189,9 @@ pub fn save(path: &Path, cfg: &EngineConfig) -> anyhow::Result<()> {
 pub fn load(path: &Path) -> anyhow::Result<EngineConfig> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("read core config {}", path.display()))?;
-    let body: ConfigResponse = serde_json::from_str(&text)
+    let patch: ConfigUpdate = serde_json::from_str(&text)
         .with_context(|| format!("parse core config {}", path.display()))?;
-    Ok(body.into_core())
+    let mut cfg = EngineConfig::default();
+    patch.apply(&mut cfg);
+    Ok(cfg)
 }

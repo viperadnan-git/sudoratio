@@ -177,6 +177,10 @@ function ConfigPage() {
               onChange={setN("bandwidth_tick_ms")}
             />
           </Row>
+          <AggregateCeiling
+            maxUploadKBps={draft.max_upload_speed}
+            maxActive={draft.max_active_torrents}
+          />
         </Panel>
 
         <Panel
@@ -211,6 +215,13 @@ function ConfigPage() {
               onChange={setN("pause_torrent_with_zero_leechers_grace")}
             />
           </Row>
+          <Row label="Min swarm seeders" hint="0 = off · pause if scrape < N">
+            <NumInput
+              min={0}
+              value={draft.min_swarm_seeders_to_seed}
+              onChange={setN("min_swarm_seeders_to_seed")}
+            />
+          </Row>
         </Panel>
 
         <Panel
@@ -236,6 +247,16 @@ function ConfigPage() {
               min={0}
               value={draft.max_concurrent_announces}
               onChange={setN("max_concurrent_announces")}
+            />
+          </Row>
+          <Row
+            label="Announce jitter"
+            hint="0 = off · adds 0–N s drift on reschedule"
+          >
+            <NumInput
+              min={0}
+              value={draft.max_announce_jitter}
+              onChange={setN("max_announce_jitter")}
             />
           </Row>
           <ConnectivityRow port={draft.announce_port} dirty={!!dirty} />
@@ -539,6 +560,248 @@ function RangeRow({
         </span>
         <NumInput min={0} value={maxValue} onChange={onMax} />
       </div>
+    </div>
+  );
+}
+
+const PLAUSIBILITY_TIERS: {
+  threshold: number;
+  short: string;
+  full: string;
+  pill: string;
+}[] = [
+  { threshold: 0, short: "10", full: "avg residential", pill: "residential" },
+  { threshold: 50, short: "50", full: "high residential", pill: "fiber" },
+  { threshold: 100, short: "100", full: "seedbox", pill: "seedbox" },
+  {
+    threshold: 1000,
+    short: "1G",
+    full: "high-end seedbox",
+    pill: "high-end",
+  },
+  {
+    threshold: 10000,
+    short: "10G",
+    full: "10 Gbps+ seedbox",
+    pill: "10G+",
+  },
+];
+
+const SCALE_MIN = 10;
+const SCALE_MAX = 10000;
+const logPct = (mbps: number) => {
+  if (mbps <= SCALE_MIN) return 0;
+  if (mbps >= SCALE_MAX) return 100;
+  return (
+    (Math.log10(mbps / SCALE_MIN) / Math.log10(SCALE_MAX / SCALE_MIN)) * 100
+  );
+};
+
+const fmtMbps = (mbps: number) => {
+  if (mbps >= 1000) return (mbps / 1000).toFixed(mbps >= 10000 ? 0 : 1);
+  if (mbps >= 100) return mbps.toFixed(0);
+  if (mbps >= 10) return mbps.toFixed(1);
+  if (mbps >= 1) return mbps.toFixed(2);
+  return mbps.toFixed(2);
+};
+
+const mbpsUnit = (mbps: number) => (mbps >= 1000 ? "Gbps" : "Mbps");
+
+function AggregateCeiling({
+  maxUploadKBps,
+  maxActive,
+}: {
+  maxUploadKBps: number;
+  maxActive: number;
+}) {
+  const aggKBps = Math.max(0, maxUploadKBps) * Math.max(0, maxActive);
+  const mbps = (aggKBps * 8) / 1000;
+  const mBPerS = aggKBps / 1000;
+
+  let tone: "ok" | "warn" | "amber" | "red";
+  if (mbps > 10000) tone = "red";
+  else if (mbps > 1000) tone = "amber";
+  else if (mbps > 100) tone = "warn";
+  else tone = "ok";
+
+  const activeIdx = PLAUSIBILITY_TIERS.reduce(
+    (acc, t, i) => (mbps >= t.threshold ? i : acc),
+    0,
+  );
+  const active = PLAUSIBILITY_TIERS[activeIdx];
+
+  const wrapCls =
+    tone === "red"
+      ? "border-destructive/30 bg-destructive/[0.04]"
+      : tone === "amber"
+        ? "border-amber-500/30 bg-amber-500/[0.05]"
+        : tone === "warn"
+          ? "border-yellow-500/30 bg-yellow-500/[0.05]"
+          : "border-border/60 bg-muted/40";
+
+  const fillStyle =
+    tone === "red"
+      ? "bg-gradient-to-r from-destructive/40 via-destructive/70 to-destructive"
+      : tone === "amber"
+        ? "bg-gradient-to-r from-amber-500/40 via-amber-500/70 to-amber-500"
+        : tone === "warn"
+          ? "bg-gradient-to-r from-yellow-500/40 via-yellow-500/65 to-yellow-500/85"
+          : "bg-gradient-to-r from-emerald-500/40 via-emerald-500/65 to-emerald-500/85";
+
+  const dotCls =
+    tone === "red"
+      ? "bg-destructive"
+      : tone === "amber"
+        ? "bg-amber-500"
+        : tone === "warn"
+          ? "bg-yellow-500"
+          : "bg-emerald-500";
+
+  const textTone =
+    tone === "red"
+      ? "text-destructive"
+      : tone === "amber"
+        ? "text-amber-700 dark:text-amber-400"
+        : tone === "warn"
+          ? "text-yellow-700 dark:text-yellow-400"
+          : "text-emerald-700 dark:text-emerald-400";
+
+  const pillCls =
+    tone === "red"
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : tone === "amber"
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : tone === "warn"
+          ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
+          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+
+  const valuePct = logPct(mbps);
+
+  return (
+    <div className={cn("border-t px-4 py-3.5 md:px-5 md:py-4", wrapCls)}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[9.5px] uppercase leading-none tracking-[0.18em] text-muted-foreground/75">
+          Plausibility ceiling
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] font-mono text-[9.5px] uppercase leading-none tracking-wider",
+            pillCls,
+          )}
+        >
+          <span
+            aria-hidden="true"
+            className={cn("size-1.5 rounded-full", dotCls)}
+          />
+          {active.pill}
+        </span>
+      </div>
+
+      <div className="mt-3 flex items-baseline gap-1.5 leading-none">
+        <span
+          className={cn(
+            "text-[30px] font-semibold tabular-nums tracking-tight md:text-[34px]",
+            textTone,
+          )}
+        >
+          {fmtMbps(mbps)}
+        </span>
+        <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+          {mbpsUnit(mbps)}
+        </span>
+      </div>
+      <div className="mt-1 text-[11.5px] font-medium leading-tight text-foreground/80">
+        {active.full}
+      </div>
+
+      <div className="mt-2 font-mono text-[10.5px] uppercase tracking-wider leading-tight text-muted-foreground/70">
+        {maxActive} × {maxUploadKBps} KB/s · {mBPerS.toFixed(1)} MB/s
+      </div>
+
+      <div className="mt-3.5 select-none">
+        <div className="relative h-2 w-full rounded-full bg-foreground/[0.08] shadow-[inset_0_1px_0_0_rgba(0,0,0,0.04)]">
+          {PLAUSIBILITY_TIERS.slice(1, -1).map((t) => {
+            const left = logPct(t.threshold);
+            return (
+              <span
+                key={t.threshold}
+                aria-hidden="true"
+                className="absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-foreground/25"
+                style={{ left: `${left}%` }}
+              />
+            );
+          })}
+          <span
+            className={cn(
+              "absolute inset-y-0 left-0 rounded-full transition-[width] duration-300 ease-out",
+              fillStyle,
+            )}
+            style={{ width: `${valuePct}%` }}
+          />
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-background shadow-sm transition-[left] duration-300 ease-out",
+              dotCls,
+            )}
+            style={{ left: `${valuePct}%` }}
+          />
+        </div>
+
+        <div className="relative mt-2 h-3 w-full">
+          {PLAUSIBILITY_TIERS.map((t, i) => {
+            const left = logPct(t.threshold);
+            const isActive = i === activeIdx;
+            const align =
+              i === 0
+                ? "translate-x-0"
+                : i === PLAUSIBILITY_TIERS.length - 1
+                  ? "-translate-x-full"
+                  : "-translate-x-1/2";
+            return (
+              <span
+                key={t.threshold}
+                className={cn(
+                  "absolute top-0 font-mono text-[9.5px] uppercase tabular-nums leading-none tracking-wider transition-colors",
+                  align,
+                  isActive
+                    ? cn("font-semibold", textTone)
+                    : "text-muted-foreground/55",
+                )}
+                style={{ left: `${left}%` }}
+              >
+                {t.short}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {tone !== "ok" && (
+        <div
+          className={cn(
+            "mt-3 flex items-start gap-2 rounded-md border px-2.5 py-2",
+            tone === "red"
+              ? "border-destructive/20 bg-destructive/[0.05]"
+              : tone === "amber"
+                ? "border-amber-500/25 bg-amber-500/[0.06]"
+                : "border-yellow-500/25 bg-yellow-500/[0.06]",
+          )}
+        >
+          <AlertTriangle
+            className={cn("mt-[1px] size-3 shrink-0", textTone)}
+            strokeWidth={1.75}
+            aria-hidden="true"
+          />
+          <span className={cn("text-[11px] leading-snug", textTone)}>
+            {tone === "warn"
+              ? "Past residential — only plausible if you've declared a seedbox to the tracker."
+              : tone === "amber"
+                ? "Past avg seedbox — implies a high-end seedbox tier (1 Gbps+)."
+                : "Past 10 Gbps — implausible for any commercial connection. Almost-certain ban trigger."}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
