@@ -38,6 +38,9 @@ pub(crate) struct ClientProfileRecord {
 
 pub struct Engine {
     pub(crate) config: ArcSwap<EngineConfig>,
+    pub(crate) presets: Arc<crate::preset::PresetRegistry>,
+    pub(crate) db: crate::persistence::Persistence,
+    pub(crate) data_dir: Option<std::path::PathBuf>,
     pub(crate) profiles: DashMap<ClientProfileId, Arc<ClientProfileRecord>>,
     pub(crate) active_profile: RwLock<Option<ClientProfileId>>,
     pub(crate) torrents: DashMap<TorrentId, TorrentEntry>,
@@ -155,8 +158,22 @@ impl Engine {
         self.state_change_notify.notify_one();
     }
 
-    /// Forward an announce trace to the embedder (e.g. SQLite writer).
+    /// Forward an announce trace to the embedder sink (optional) and persist to SQLite.
     pub(crate) fn emit_announce_trace(&self, tid: TorrentId, trace: AnnounceTrace) {
+        // Persist trace + torrent state.
+        if let Some(t) = self.export_torrent(tid) {
+            if let Some(info_hash) = t.info_hash.clone() {
+                let db = self.db.clone();
+                let trace_clone = trace.clone();
+                let t_clone = t.clone();
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    db.save_torrent(&t_clone)?;
+                    db.append_announce(&info_hash, &trace_clone)?;
+                    Ok(())
+                });
+            }
+            self.clear_dirty(tid);
+        }
         if let Some(tx) = self.announce_sink.lock().as_ref() {
             if tx.send((tid, trace)).is_err() {
                 tracing::warn!(?tid, "announce trace dropped: subscriber closed");
@@ -171,6 +188,7 @@ impl Engine {
         Torrent {
             id,
             info_hash: e.info_hash.as_ref().map(|s| s.to_string()),
+            preset_id: e.preset_id(),
             name: e.name.to_string(),
             size: Some(e.size),
             downloaded: Some(e.downloaded()),
@@ -273,6 +291,11 @@ impl Engine {
             .map(|r| *r.key())
             .collect();
         for tid in active {
+            if crate::scheduler::should_pause_tiny_swarm(self, tid) {
+                crate::scheduler::auto_pause(self, tid, crate::torrent::StopReason::TinySwarm)
+                    .await;
+                continue;
+            }
             if crate::scheduler::should_pause_no_leechers(self, tid) {
                 crate::scheduler::auto_pause(self, tid, crate::torrent::StopReason::NoLeechers)
                     .await;

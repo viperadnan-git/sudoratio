@@ -1,10 +1,7 @@
-//! SQLite session persistence: WAL, foreign keys, STRICT tables.
+//! SQLite session persistence for presets, torrents, and announce traces.
 //!
-//! The schema is keyed by `info_hash` (40-hex). Engine-only runtime fields live next to the
-//! observable ones in one row to avoid the multi-table juggling of the previous layout. Trace
-//! payloads (`request`, `response`) and the tracker list are stored as JSON text — straightforward
-//! and tool-friendly. `PRAGMA user_version = 1` is the baseline; later schema bumps will add
-//! migrations from this version.
+//! Owned by the engine: [`Engine::new`] opens the DB, runs the schema, restores presets and
+//! torrents, and routes write-throughs from every state-changing engine method.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -12,14 +9,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use sudoratio_core::{
-    AnnounceEvent, AnnounceRequestTrace, AnnounceResponseTrace, AnnounceTrace, StopReason, Torrent,
-    TorrentId, TorrentRuntime, TorrentState, TrackersHttp,
+
+use crate::preset::{PresetPolicy, PresetSnapshot};
+use crate::torrent::{
+    AnnounceEvent, AnnounceRequestTrace, AnnounceResponseTrace, AnnounceTrace, StopReason,
+    Torrent, TorrentId, TorrentRuntime, TorrentState, TrackersHttp,
 };
 
 const SCHEMA_VERSION: i32 = 1;
 
 const SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS preset (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL,
+    is_default INTEGER NOT NULL,
+    policy_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS torrent (
     info_hash TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -44,8 +53,11 @@ CREATE TABLE IF NOT EXISTS torrent (
     consecutive_fails INTEGER NOT NULL,
     reason TEXT,
     queue_position INTEGER NOT NULL,
-    added_at INTEGER NOT NULL
+    added_at INTEGER NOT NULL,
+    preset_id TEXT NOT NULL DEFAULT 'default'
 ) STRICT;
+
+CREATE INDEX IF NOT EXISTS torrent_by_preset ON torrent(preset_id);
 
 CREATE TABLE IF NOT EXISTS announce (
     info_hash TEXT NOT NULL REFERENCES torrent(info_hash) ON DELETE CASCADE,
@@ -65,11 +77,11 @@ CREATE INDEX IF NOT EXISTS announce_by_info_hash ON announce(info_hash, seq);
 "#;
 
 #[derive(Clone)]
-pub struct Session {
+pub(crate) struct Persistence {
     conn: Arc<Mutex<Connection>>,
 }
 
-impl Session {
+impl Persistence {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
             .with_context(|| format!("open session database {}", path.display()))?;
@@ -89,13 +101,76 @@ impl Session {
         })
     }
 
-    /// Insert or update a single torrent row. Does **not** touch the announce table — announce
-    /// rows are appended incrementally by [`Self::append_announce`] as the engine emits traces.
-    pub fn upsert_torrent(&self, t: &Torrent) -> Result<()> {
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        conn.execute_batch(SCHEMA_SQL)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    pub fn save_preset(&self, p: &PresetSnapshot) -> Result<()> {
+        let conn = self.conn.lock().expect("session lock");
+        let policy_json = serde_json::to_string(&p.policy)?;
+        conn.execute(
+            r#"INSERT INTO preset (id, name, color, is_default, policy_json, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+               ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 color = excluded.color,
+                 is_default = excluded.is_default,
+                 policy_json = excluded.policy_json,
+                 updated_at = excluded.updated_at"#,
+            params![
+                p.id,
+                p.name,
+                p.color,
+                p.is_default as i64,
+                policy_json,
+                p.created_at_ms as i64,
+                p.updated_at_ms as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_preset(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("session lock");
+        conn.execute("DELETE FROM preset WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn read_presets(&self) -> Result<Vec<PresetSnapshot>> {
+        let conn = self.conn.lock().expect("session lock");
+        let mut stmt = conn.prepare(
+            r#"SELECT id, name, color, is_default, policy_json, created_at, updated_at
+               FROM preset ORDER BY is_default DESC, id ASC"#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let policy_json: String = row.get(4)?;
+            let policy: PresetPolicy = serde_json::from_str(&policy_json)
+                .with_context(|| "preset policy_json corrupt")?;
+            out.push(PresetSnapshot {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                is_default: row.get::<_, i64>(3)? != 0,
+                policy,
+                created_at_ms: row.get::<_, i64>(5)? as u64,
+                updated_at_ms: row.get::<_, i64>(6)? as u64,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn save_torrent(&self, t: &Torrent) -> Result<()> {
         let info_hash = t
             .info_hash
             .as_ref()
-            .context("upsert_torrent: missing info_hash")?;
+            .context("save_torrent: missing info_hash")?;
         let mut conn = self.conn.lock().expect("session lock");
         let tx = conn.transaction()?;
         upsert_one(&tx, info_hash, t)?;
@@ -103,8 +178,15 @@ impl Session {
         Ok(())
     }
 
-    /// Append one announce trace. `seq` is auto-assigned as `MAX(seq)+1` per torrent so traces
-    /// stay ordered without requiring callers to track sequence numbers.
+    pub fn delete_torrent(&self, info_hash: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("session lock");
+        conn.execute(
+            "DELETE FROM torrent WHERE info_hash = ?1",
+            params![info_hash],
+        )?;
+        Ok(())
+    }
+
     pub fn append_announce(&self, info_hash: &str, a: &AnnounceTrace) -> Result<()> {
         let mut conn = self.conn.lock().expect("session lock");
         let tx = conn.transaction()?;
@@ -120,8 +202,6 @@ impl Session {
         Ok(())
     }
 
-    /// Page through announce history (newest first). `offset = 0` is the latest trace.
-    /// Returns `(items, total)` where `total` is the full count for this torrent.
     pub fn read_announces(
         &self,
         info_hash: &str,
@@ -147,42 +227,15 @@ impl Session {
         Ok((items, total as usize))
     }
 
-    /// FK `ON DELETE CASCADE` on `announce.info_hash` removes the trace history along with it.
-    pub fn delete_torrent(&self, info_hash: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("session lock");
-        conn.execute(
-            "DELETE FROM torrent WHERE info_hash = ?1",
-            params![info_hash],
-        )?;
-        Ok(())
-    }
-
-    /// Bulk upsert (single transaction). Non-destructive: rows not in `snapshot` are preserved.
-    /// Removal happens only via the explicit `delete_torrent` path (route handler).
-    pub fn upsert_many(&self, snapshot: &[Torrent]) -> Result<()> {
-        if snapshot.is_empty() {
-            return Ok(());
-        }
-        let mut conn = self.conn.lock().expect("session lock");
-        let tx = conn.transaction()?;
-        for t in snapshot {
-            let Some(info_hash) = t.info_hash.as_ref() else {
-                continue;
-            };
-            upsert_one(&tx, info_hash, t)?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn read_all(&self) -> Result<Vec<Torrent>> {
+    pub fn read_torrents(&self) -> Result<Vec<Torrent>> {
         let conn = self.conn.lock().expect("session lock");
         let mut stmt = conn.prepare(
             r#"SELECT info_hash, name, size, left_bytes, uploaded,
                download_speed, upload_speed, seeders, leechers, state, download_before_seed,
                trackers, announce_interval, min_announce_interval, last_announced_at,
                tier_index, intra_index, announce_count, last_announce_interval_seconds,
-               last_successful_announce_unix_ms, consecutive_fails, reason, queue_position
+               last_successful_announce_unix_ms, consecutive_fails, reason, queue_position,
+               preset_id
                FROM torrent ORDER BY queue_position ASC, added_at ASC"#,
         )?;
         let mut rows = stmt.query([])?;
@@ -203,9 +256,11 @@ impl Session {
             let state = parse_state(&row.get::<_, String>(9)?, reason)?;
             let min_iv: Option<i64> = row.get(13)?;
             let info_hash_bytes = decode_info_hash(&info_hash);
+            let preset_id: String = row.get(23)?;
             out.push(Torrent {
                 id,
                 info_hash: Some(info_hash),
+                preset_id,
                 name: row.get(1)?,
                 size: Some(row.get::<_, i64>(2)? as u64),
                 downloaded: None,
@@ -265,9 +320,9 @@ fn upsert_one(tx: &rusqlite::Transaction<'_>, info_hash: &str, t: &Torrent) -> R
             trackers, announce_interval, min_announce_interval, last_announced_at,
             tier_index, intra_index, announce_count, last_announce_interval_seconds,
             last_successful_announce_unix_ms, consecutive_fails, reason,
-            queue_position, added_at
+            queue_position, added_at, preset_id
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                  ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+                  ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
         ON CONFLICT(info_hash) DO UPDATE SET
             name=excluded.name, size=excluded.size,
             left_bytes=excluded.left_bytes,
@@ -283,7 +338,8 @@ fn upsert_one(tx: &rusqlite::Transaction<'_>, info_hash: &str, t: &Torrent) -> R
             last_announce_interval_seconds=excluded.last_announce_interval_seconds,
             last_successful_announce_unix_ms=excluded.last_successful_announce_unix_ms,
             consecutive_fails=excluded.consecutive_fails, reason=excluded.reason,
-            queue_position=excluded.queue_position"#,
+            queue_position=excluded.queue_position,
+            preset_id=excluded.preset_id"#,
         params![
             info_hash,
             t.name,
@@ -309,6 +365,7 @@ fn upsert_one(tx: &rusqlite::Transaction<'_>, info_hash: &str, t: &Torrent) -> R
             t.reason.map(|r| r.as_str()),
             t.queue_position as i64,
             added_at,
+            t.preset_id,
         ],
     )?;
     Ok(())
@@ -342,9 +399,6 @@ fn insert_announce_row(
     Ok(())
 }
 
-/// Decode one announce row into an `AnnounceTrace`. Column order must match the SELECT in
-/// [`Session::read_announces`]: `tracker_index, event, announced_at, success, error_code,
-/// error_message, request, response`.
 fn map_announce_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AnnounceTrace> {
     let req: String = r.get(6)?;
     let resp: String = r.get(7)?;
@@ -409,67 +463,4 @@ fn decode_info_hash(s: &str) -> Option<[u8; 20]> {
     let mut bytes = [0u8; 20];
     hex::decode_to_slice(s, &mut bytes).ok()?;
     Some(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sudoratio_core::TrackersHttp;
-
-    fn sample_torrent(hash: &str) -> Torrent {
-        Torrent {
-            id: TorrentId::from_hex(hash).expect("test info_hash hex"),
-            info_hash: Some(hash.to_string()),
-            name: "sample".into(),
-            size: Some(1024),
-            downloaded: Some(0),
-            uploaded: Some(0),
-            left: Some(1024),
-            download_speed: Some(0),
-            upload_speed: Some(0),
-            seeders: Some(3),
-            leechers: Some(2),
-            state: TorrentState::Seeding,
-            reason: None,
-            download_before_seed: false,
-            trackers: TrackersHttp {
-                tiers: vec![vec!["http://t/announce".into()]],
-            },
-            announce_interval: Some(60),
-            min_announce_interval: Some(30),
-            last_announced_at: Some(1234567890),
-            queue_position: 0,
-            runtime: TorrentRuntime::default(),
-        }
-    }
-
-    #[test]
-    fn roundtrip_upsert_then_read() {
-        let dir = tempdir_inside_target();
-        let db_path = dir.join("session.sqlite");
-        let s = Session::open(&db_path).unwrap();
-        let hash = "a".repeat(40);
-        s.upsert_torrent(&sample_torrent(&hash)).unwrap();
-        let rows = s.read_all().unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].info_hash.as_deref(), Some(hash.as_str()));
-        assert_eq!(rows[0].size, Some(1024));
-    }
-
-    #[test]
-    fn delete_removes_row_and_announces() {
-        let dir = tempdir_inside_target();
-        let db_path = dir.join("session2.sqlite");
-        let s = Session::open(&db_path).unwrap();
-        let hash = "b".repeat(40);
-        s.upsert_torrent(&sample_torrent(&hash)).unwrap();
-        s.delete_torrent(&hash).unwrap();
-        assert!(s.read_all().unwrap().is_empty());
-    }
-
-    fn tempdir_inside_target() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("sudoratio-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
 }

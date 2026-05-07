@@ -306,8 +306,15 @@ pub struct Torrent {
     pub last_announced_at: Option<u64>,
     /// Lower runs first when promoting from `Queued`; stable across pause/resume.
     pub queue_position: u32,
+    /// Owning preset id (`default` for the built-in).
+    #[serde(default = "default_preset_id_str")]
+    pub preset_id: String,
     #[serde(skip, default)]
     pub runtime: TorrentRuntime,
+}
+
+fn default_preset_id_str() -> String {
+    crate::preset::DEFAULT_PRESET_ID.into()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -362,6 +369,11 @@ pub(crate) struct TorrentEntry {
     pub(crate) state: Mutex<TorrentMutable>,
     /// Set on every state mutation; cleared by the periodic persist task.
     pub(crate) dirty: AtomicBool,
+    /// Owning preset id. Mutable via `Engine::move_torrent`.
+    pub(crate) preset_id: parking_lot::RwLock<String>,
+    /// Live policy snapshot — Arc-shared with the preset's `Preset.policy`.
+    /// Reassignment swaps this; preset PATCH updates underlying value via `ArcSwap::store`.
+    pub(crate) policy: parking_lot::RwLock<Arc<arc_swap::ArcSwap<crate::preset::PresetPolicy>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -531,5 +543,23 @@ impl TorrentEntry {
 
     pub(crate) fn snapshot(&self) -> TorrentMutable {
         self.state.lock().clone()
+    }
+
+    pub(crate) fn preset_id(&self) -> String {
+        self.preset_id.read().clone()
+    }
+
+    pub(crate) fn set_preset(
+        &self,
+        new_id: String,
+        new_policy: Arc<arc_swap::ArcSwap<crate::preset::PresetPolicy>>,
+    ) {
+        *self.preset_id.write() = new_id;
+        *self.policy.write() = new_policy;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn policy_snapshot(&self) -> Arc<crate::preset::PresetPolicy> {
+        self.policy.read().load_full()
     }
 }

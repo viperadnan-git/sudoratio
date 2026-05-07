@@ -1,23 +1,15 @@
-//! Filesystem persistence for user-registered client docs.
-//!
-//! One TOML file per client family at `<config_dir>/client-profiles/<client>.toml`. On startup
-//! [`load_all`] walks the directory and re-registers each doc.
+//! Filesystem persistence for user-registered client docs (`<data_dir>/clients/<name>.toml`).
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use sudoratio_core::Engine;
 
-const SUBDIR: &str = "clients";
+pub(crate) const SUBDIR: &str = "clients";
 
-fn dir_for(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(SUBDIR)
+pub(crate) fn dir_for(data_dir: &Path) -> PathBuf {
+    data_dir.join(SUBDIR)
 }
 
-/// Restrict client names to a safe filesystem charset.
 fn validate_client(client: &str) -> Result<()> {
     if client.is_empty() {
         anyhow::bail!("client name is empty");
@@ -31,12 +23,12 @@ fn validate_client(client: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn save(config_path: &Path, client: &str, toml_str: &str) -> Result<()> {
+pub(crate) async fn save(data_dir: &Path, client: &str, toml_str: &str) -> Result<()> {
     validate_client(client)?;
-    let dir = dir_for(config_path);
+    let dir = dir_for(data_dir);
     tokio::fs::create_dir_all(&dir)
         .await
-        .with_context(|| format!("create client-profiles dir {}", dir.display()))?;
+        .with_context(|| format!("create clients dir {}", dir.display()))?;
     let final_path = dir.join(format!("{client}.toml"));
     let tmp = dir.join(format!(".{client}.toml.tmp"));
     tokio::fs::write(&tmp, toml_str)
@@ -48,9 +40,9 @@ pub async fn save(config_path: &Path, client: &str, toml_str: &str) -> Result<()
     Ok(())
 }
 
-pub async fn delete(config_path: &Path, client: &str) -> Result<()> {
+pub(crate) async fn delete(data_dir: &Path, client: &str) -> Result<()> {
     validate_client(client)?;
-    let path = dir_for(config_path).join(format!("{client}.toml"));
+    let path = dir_for(data_dir).join(format!("{client}.toml"));
     match tokio::fs::remove_file(&path).await {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -58,14 +50,14 @@ pub async fn delete(config_path: &Path, client: &str) -> Result<()> {
     }
 }
 
-pub async fn load_all(config_path: &Path, core: &Engine) -> Result<usize> {
-    let dir = dir_for(config_path);
+pub(crate) async fn read_all(data_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
+    let dir = dir_for(data_dir);
     let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e).with_context(|| format!("read_dir {}", dir.display())),
     };
-    let mut count = 0;
+    let mut out = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("toml") {
@@ -78,19 +70,7 @@ pub async fn load_all(config_path: &Path, core: &Engine) -> Result<usize> {
                 continue;
             }
         };
-        match core.register_client(&toml).await {
-            Ok(ids) => {
-                tracing::info!(
-                    variants = ids.len(),
-                    path = %path.display(),
-                    "loaded user client doc"
-                );
-                count += ids.len();
-            }
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "skipping invalid client doc");
-            }
-        }
+        out.push((path, toml));
     }
-    Ok(count)
+    Ok(out)
 }

@@ -1,12 +1,4 @@
-//! Client profile routes.
-//!
-//! API model:
-//!   GET    /api/v1/clients                    -> list of variants (id = client@version)
-//!   POST   /api/v1/clients                    -> register/replace a user client doc
-//!   GET    /api/v1/clients/{client}/source    -> raw doc TOML by client family
-//!   DELETE /api/v1/clients/{client}           -> remove a user client (all variants)
-//!   POST   /api/v1/clients/variants/{id}/activate
-//!                                                     -> activate one variant by id
+//! Client profile routes — engine handles persistence + bundled defaults internally.
 
 use std::sync::Arc;
 
@@ -15,9 +7,7 @@ use axum::Json;
 use serde::Deserialize;
 use sudoratio_core::{ClientProfileId, ClientProfileSummary, SudoratioError};
 
-use crate::bundled;
 use crate::error::{api_error, ApiErrorResponse};
-use crate::profile_store;
 use crate::state::AppState;
 
 pub async fn list(State(s): State<Arc<AppState>>) -> Json<Vec<ClientProfileSummary>> {
@@ -28,7 +18,6 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Json<Vec<ClientProfileSumma
 
 #[derive(Deserialize)]
 pub struct RegisterBody {
-    /// Full client doc TOML (top-level `client = "..."` + base + `[[variant]]` blocks).
     pub toml: String,
 }
 
@@ -44,16 +33,13 @@ pub async fn register(
 ) -> Result<Json<RegisterResponse>, ApiErrorResponse> {
     let ids = s
         .core
-        .register_client(&body.toml)
+        .register_user_client_doc(&body.toml)
         .await
-        .map_err(api_error)?;
+        .map_err(|e| api_error(SudoratioError::ClientProfileParse(e.to_string())))?;
     let client = ids
         .first()
         .and_then(|id| id.0.split_once('@').map(|(c, _)| c.to_string()))
         .unwrap_or_default();
-    if let Err(e) = profile_store::save(&s.core_config_path, &client, &body.toml).await {
-        tracing::warn!(client = %client, error = %e, "client doc persist failed");
-    }
     tracing::info!(client = %client, variants = ids.len(), "POST /api/v1/clients ok");
     Ok(Json(RegisterResponse {
         client,
@@ -95,7 +81,6 @@ pub async fn source(
         .find(|p| p.client == client)
         .map(|p| p.editable)
         .unwrap_or(false);
-    tracing::info!(client = %client, editable, "GET source");
     Ok(Json(ClientSourceResponse {
         client,
         editable,
@@ -107,22 +92,9 @@ pub async fn delete(
     State(s): State<Arc<AppState>>,
     Path(client): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
-    let active_was_in_client = s
-        .core
-        .current_active_profile()
+    s.core
+        .remove_user_client_doc(&client)
         .await
-        .as_ref()
-        .map(|id| id.0.starts_with(&format!("{client}@")))
-        .unwrap_or(false);
-    s.core.remove_client(&client).await.map_err(api_error)?;
-    if let Err(e) = profile_store::delete(&s.core_config_path, &client).await {
-        tracing::warn!(client = %client, error = %e, "client doc disk delete failed");
-    }
-    if active_was_in_client {
-        if let Err(e) = bundled::activate_default_or_fallback(&s.core).await {
-            tracing::warn!(error = %e, "no fallback client after deleting active");
-        }
-    }
-    tracing::info!(client = %client, "DELETE ok");
+        .map_err(|e| api_error(SudoratioError::ClientProfileParse(e.to_string())))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -1,6 +1,7 @@
 //! Public-API impl block for [`Engine`]. The struct itself lives in [`crate::state`].
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,6 +14,8 @@ use crate::announce::public_ip::TrackerReportedIpCache;
 use crate::bandwidth::BandwidthDispatcher;
 use crate::config::EngineConfig;
 use crate::error::SudoratioError;
+use crate::persistence::Persistence;
+use crate::preset::{Preset, PresetError, PresetPolicy, PresetPolicyUpdate, PresetRegistry};
 use crate::profile;
 use crate::scheduler;
 use crate::state::{ClientProfileRecord, Engine, SeedingState};
@@ -23,46 +26,127 @@ use crate::torrent::{
 };
 
 impl Engine {
-    /// Construct an engine handle and start the always-on orchestrator loop.
-    /// Returned `Arc<Engine>` is the cloneable handle.
-    pub fn new(config: EngineConfig) -> Arc<Self> {
-        let http = config.http_tracker.build_reqwest_client();
-        let bandwidth = Arc::new(BandwidthDispatcher::new(config.bandwidth_tick_ms.max(1)));
-        let announce_concurrency = if config.max_concurrent_announces > 0 {
-            Some(Arc::new(tokio::sync::Semaphore::new(
-                config.max_concurrent_announces.max(1),
-            )))
-        } else {
-            None
+    /// Open or create persistence at `data_dir/session.sqlite3`, restore presets and
+    /// torrents, register bundled + user client profiles, and start the orchestrator.
+    /// `data_dir = None` returns an in-memory-only engine (tests).
+    pub async fn new(
+        config: EngineConfig,
+        data_dir: Option<PathBuf>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let db = match data_dir.as_ref() {
+            Some(dir) => {
+                std::fs::create_dir_all(dir)?;
+                tokio::fs::create_dir_all(dir.join(crate::profile_store::SUBDIR)).await?;
+                let p = dir.join("session.sqlite3");
+                let p_clone = p.clone();
+                let db =
+                    tokio::task::spawn_blocking(move || Persistence::open(p_clone.as_path()))
+                        .await??;
+                tracing::info!(path = %p.display(), "session sqlite ready");
+                db
+            }
+            None => Persistence::open_in_memory()?,
         };
-        let dial_cap = config.outbound_dial_max_concurrent_global.max(1);
-        let inner = Arc::new(Self {
-            config: arc_swap::ArcSwap::from_pointee(config),
-            profiles: DashMap::new(),
-            active_profile: RwLock::new(None),
-            torrents: DashMap::new(),
-            http,
-            bandwidth,
-            shutting_down: AtomicBool::new(false),
-            seeding_state: PlMutex::new(SeedingState::default()),
-            seeding_task: Mutex::new(None),
-            announce_concurrency,
-            announce_inflight: AtomicUsize::new(0),
-            orchestrator_notify: Arc::new(tokio::sync::Notify::new()),
-            identities: Default::default(),
-            tracker_reported_ip: PlMutex::new(TrackerReportedIpCache::default()),
-            announce_sink: PlMutex::new(None),
-            state_change_notify: Arc::new(tokio::sync::Notify::new()),
-            listening_port: AtomicU16::new(0),
-            peer_listener_task: Mutex::new(None),
-            dial_global_sem: Arc::new(tokio::sync::Semaphore::new(dial_cap)),
-        });
+        let inner = build_engine(config, db, data_dir)?;
+        inner.bootstrap().await?;
+        let loop_inner = inner.clone();
+        let task = tokio::spawn(async move { scheduler::run_loop(loop_inner).await });
+        if let Ok(mut g) = inner.seeding_task.try_lock() {
+            *g = Some(task);
+        }
+        Ok(inner)
+    }
+
+    /// Pure in-memory engine. No persistence; suitable for tests.
+    pub fn new_in_memory(config: EngineConfig) -> Arc<Self> {
+        let db = Persistence::open_in_memory().expect(":memory: SQLite open");
+        let inner = build_engine(config, db, None).expect("in-memory engine bootstrap");
+        inner.presets.ensure_default();
+        let snap = inner.presets.list()[0].snapshot();
+        let _ = inner.db.save_preset(&snap);
         let loop_inner = inner.clone();
         let task = tokio::spawn(async move { scheduler::run_loop(loop_inner).await });
         if let Ok(mut g) = inner.seeding_task.try_lock() {
             *g = Some(task);
         }
         inner
+    }
+
+    /// Restore presets + torrents from SQLite, register bundled and user client docs.
+    async fn bootstrap(self: &Arc<Self>) -> anyhow::Result<()> {
+        let presets = {
+            let db = self.db.clone();
+            tokio::task::spawn_blocking(move || db.read_presets()).await??
+        };
+        if presets.is_empty() {
+            self.presets.ensure_default();
+            let snap = self.presets.list()[0].snapshot();
+            let db = self.db.clone();
+            tokio::task::spawn_blocking(move || db.save_preset(&snap)).await??;
+        } else {
+            for p in presets {
+                let preset = Arc::new(crate::preset::Preset {
+                    id: p.id.clone(),
+                    name: parking_lot::RwLock::new(p.name.clone()),
+                    color: parking_lot::RwLock::new(p.color.clone()),
+                    is_default: p.is_default,
+                    policy: Arc::new(arc_swap::ArcSwap::from_pointee(p.policy.clone())),
+                    created_at_ms: p.created_at_ms,
+                    updated_at_ms: parking_lot::RwLock::new(p.updated_at_ms),
+                });
+                self.presets.insert(preset);
+            }
+            self.presets.ensure_default();
+        }
+
+        for (client, toml) in profile::BUNDLED_CLIENTS {
+            if let Err(e) = self.register_builtin_client(toml).await {
+                tracing::warn!(client = %client, error = %e, "bundled client load failed");
+            }
+        }
+        if let Some(dir) = self.data_dir.as_ref() {
+            match crate::profile_store::read_all(dir).await {
+                Ok(items) => {
+                    for (path, toml) in items {
+                        if let Err(e) = self.register_client(&toml).await {
+                            tracing::warn!(path = %path.display(), error = %e, "skipping invalid user client doc");
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "failed to scan user client profiles"),
+            }
+        }
+        if let Err(e) = self.activate_default_profile_or_first().await {
+            tracing::warn!(error = %e, "no client profile activated");
+        }
+
+        let torrents = {
+            let db = self.db.clone();
+            tokio::task::spawn_blocking(move || db.read_torrents()).await??
+        };
+        for t in torrents {
+            let preset_id = t.preset_id.clone();
+            if let Err(e) = self.restore_torrent_with_preset(t, Some(&preset_id)).await {
+                tracing::warn!(error = %e, "restore_torrent skipped");
+            }
+        }
+        Ok(())
+    }
+
+    /// Try `deluge@2.2.0` first, then any registered profile.
+    async fn activate_default_profile_or_first(&self) -> anyhow::Result<()> {
+        let pref = ClientProfileId::from("deluge@2.2.0");
+        if self.set_active_profile(pref).await.is_ok() {
+            return Ok(());
+        }
+        let rows = self.list_profiles().await;
+        let Some(first) = rows.first() else {
+            anyhow::bail!("no client profile available to activate");
+        };
+        self.set_active_profile(ClientProfileId::from(first.id.as_str()))
+            .await
+            .map_err(|e| anyhow::anyhow!("set active profile: {e}"))?;
+        Ok(())
     }
 
     /// Snapshot of the live engine config. Held by `Arc`; cheap to clone.
@@ -88,47 +172,208 @@ impl Engine {
         }
     }
 
-    /// Apply a new config atomically. The orchestrator and bandwidth simulator pick up new
-    /// values on their next iteration; if `max_active_torrents` increased, idle torrents are
-    /// promoted into freshly opened slots before this returns.
-    ///
-    /// Note: HTTP tracker client knobs (`HttpTrackerConfig.*`) are read at startup only.
-    pub async fn update_config(&self, cfg: EngineConfig) {
-        let prev = self.config.load();
-        let prev_active_cap = prev.max_active_torrents;
-        let speed_bounds_changed = prev.min_upload_speed != cfg.min_upload_speed
-            || prev.max_upload_speed != cfg.max_upload_speed
-            || prev.min_download_speed != cfg.min_download_speed
-            || prev.max_download_speed != cfg.max_download_speed;
-        let new_active_cap = cfg.max_active_torrents;
-        let (min_dl, max_dl, min_ul, max_ul) = (
-            cfg.min_download_speed,
-            cfg.max_download_speed,
-            cfg.min_upload_speed,
-            cfg.max_upload_speed,
-        );
-        drop(prev);
-        self.config.store(Arc::new(cfg));
-        if speed_bounds_changed {
-            // New min/max bounds take effect immediately for every registered torrent —
-            // no waiting for the next tick or next announce.
-            self.bandwidth
-                .apply_bounds(min_dl, max_dl, min_ul, max_ul, &self.torrents);
+    /// Apply a new infra config and persist `config.json`. Per-preset policy lives separately.
+    pub async fn update_config(&self, cfg: EngineConfig) -> anyhow::Result<()> {
+        self.config.store(Arc::new(cfg.clone()));
+        self.orchestrator_notify.notify_one();
+        if let Some(dir) = self.data_dir.clone() {
+            tokio::task::spawn_blocking(move || {
+                crate::config_io::save(&dir.join("config.json"), &cfg)
+            })
+            .await??;
+        }
+        Ok(())
+    }
+
+    /// Snapshot list of all presets (sorted: default first, then by id).
+    pub fn list_presets(&self) -> Vec<Arc<Preset>> {
+        self.presets.list()
+    }
+
+    pub fn get_preset(&self, id: &str) -> Option<Arc<Preset>> {
+        self.presets.get(id)
+    }
+
+    pub async fn create_preset(
+        &self,
+        id: Option<String>,
+        name: String,
+        color: String,
+        policy: PresetPolicy,
+    ) -> Result<Arc<Preset>, PresetError> {
+        let preset = self.presets.create(id, name, color, policy)?;
+        self.persist_preset(&preset);
+        Ok(preset)
+    }
+
+    pub async fn rename_preset(
+        &self,
+        id: &str,
+        name: Option<String>,
+        color: Option<String>,
+    ) -> Result<Arc<Preset>, PresetError> {
+        let preset = self.presets.update_name_color(id, name, color)?;
+        self.persist_preset(&preset);
+        Ok(preset)
+    }
+
+    fn persist_preset(&self, preset: &Arc<Preset>) {
+        let snap = preset.snapshot();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.save_preset(&snap) {
+                tracing::warn!(error = %e, "preset persist failed");
+            }
+        });
+    }
+
+    fn persist_torrent(&self, tid: TorrentId) {
+        let Some(t) = self.export_torrent(tid) else {
+            return;
+        };
+        self.clear_dirty(tid);
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.save_torrent(&t) {
+                tracing::warn!(error = %e, "torrent persist failed");
+            }
+        });
+    }
+
+    /// Live-apply a policy patch. All torrents using this preset see the new caps on next
+    /// bandwidth tick; if upload/download bounds changed, the bandwidth dispatcher is also
+    /// re-synced for those torrents immediately. If `max_active_torrents` decreased, the
+    /// scheduler will demote excess; if it increased, queued torrents may promote.
+    pub async fn update_preset_policy(
+        &self,
+        id: &str,
+        patch: PresetPolicyUpdate,
+    ) -> Result<Arc<Preset>, PresetError> {
+        let prev_policy = self
+            .presets
+            .get(id)
+            .map(|p| (*p.policy.load_full()).clone());
+        let preset = self.presets.apply_policy(id, patch)?;
+        let new_policy = (*preset.policy.load_full()).clone();
+        let bounds_changed = prev_policy.as_ref().is_some_and(|p| {
+            p.min_upload_speed != new_policy.min_upload_speed
+                || p.max_upload_speed != new_policy.max_upload_speed
+                || p.min_download_speed != new_policy.min_download_speed
+                || p.max_download_speed != new_policy.max_download_speed
+        });
+        if bounds_changed {
+            let ids: Vec<TorrentId> = self
+                .torrents
+                .iter()
+                .filter(|r| r.value().preset_id() == id)
+                .map(|r| *r.key())
+                .collect();
+            for tid in ids {
+                self.bandwidth.sync_torrent_to_policy(tid, &self.torrents);
+            }
         }
         self.orchestrator_notify.notify_one();
-        if new_active_cap > prev_active_cap {
-            scheduler::try_fill_slots(self).await;
+        scheduler::try_fill_slots(self).await;
+        self.persist_preset(&preset);
+        Ok(preset)
+    }
+
+    /// Delete a non-default preset. Torrents previously assigned to it are reassigned to
+    /// `reassign_to` (or to `default` when `reassign_to` is `None`).
+    pub async fn delete_preset(
+        &self,
+        id: &str,
+        reassign_to: Option<&str>,
+    ) -> Result<(), PresetError> {
+        if id == crate::preset::DEFAULT_PRESET_ID {
+            return Err(PresetError::DeleteDefault);
         }
+        let target_id = reassign_to.unwrap_or(crate::preset::DEFAULT_PRESET_ID);
+        if self.presets.get(target_id).is_none() {
+            return Err(PresetError::NotFound(target_id.into()));
+        }
+        let affected: Vec<TorrentId> = self
+            .torrents
+            .iter()
+            .filter(|r| r.value().preset_id() == id)
+            .map(|r| *r.key())
+            .collect();
+        for tid in &affected {
+            let _ = scheduler::slots::move_torrent_to_preset(self, *tid, target_id).await;
+            self.persist_torrent(*tid);
+        }
+        self.presets.remove(id)?;
+        let id_owned = id.to_string();
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = db.delete_preset(&id_owned) {
+                tracing::warn!(error = %e, "preset delete persist failed");
+            }
+        });
+        Ok(())
+    }
+
+    /// Move a single torrent to a different preset.
+    pub async fn move_torrent_to_preset(
+        &self,
+        tid: TorrentId,
+        new_preset_id: &str,
+    ) -> Result<(), SudoratioError> {
+        scheduler::slots::move_torrent_to_preset(self, tid, new_preset_id).await?;
+        self.persist_torrent(tid);
+        Ok(())
     }
 
     /// Register a **user** client doc. Resolves every `[[variant]]` into a profile id of
     /// `client@version`. Replaces any existing variants registered for the same client.
-    /// Refuses if the doc's `client` name is bundled.
+    /// Refuses if the doc's `client` name is bundled. Does NOT persist to disk; use
+    /// [`Self::register_user_client_doc`] for the API write-through.
     pub async fn register_client(
         &self,
         toml_str: &str,
     ) -> Result<Vec<ClientProfileId>, SudoratioError> {
         self.insert_client_doc(toml_str, false)
+    }
+
+    /// Register a user client doc AND persist it to `<data_dir>/clients/<client>.toml`.
+    pub async fn register_user_client_doc(
+        &self,
+        toml_str: &str,
+    ) -> anyhow::Result<Vec<ClientProfileId>> {
+        let doc = profile::parse_client_doc(toml_str)
+            .map_err(|e| anyhow::anyhow!("parse client doc: {e}"))?;
+        let client = doc.client.clone();
+        let ids = self
+            .insert_client_doc(toml_str, false)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(dir) = self.data_dir.clone() {
+            crate::profile_store::save(&dir, &client, toml_str).await?;
+        }
+        Ok(ids)
+    }
+
+    /// Remove a user client doc AND delete the on-disk file.
+    pub async fn remove_user_client_doc(&self, client: &str) -> anyhow::Result<usize> {
+        let removed = self
+            .remove_client(client)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(dir) = self.data_dir.clone() {
+            if let Err(e) = crate::profile_store::delete(&dir, client).await {
+                tracing::warn!(error = %e, "client file delete failed");
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Read announce trace history (newest-first) for a torrent.
+    pub fn read_announces(
+        &self,
+        info_hash: &str,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<(Vec<AnnounceTrace>, usize)> {
+        self.db.read_announces(info_hash, limit, offset)
     }
 
     /// Register a bundled (read-only) client doc. Server's startup seeder uses this.
@@ -337,9 +582,22 @@ impl Engine {
         &self,
         meta: MetainfoTorrent,
     ) -> Result<TorrentId, SudoratioError> {
+        self.add_torrent_metainfo_with_preset(meta, None).await
+    }
+
+    pub async fn add_torrent_metainfo_with_preset(
+        &self,
+        meta: MetainfoTorrent,
+        preset_id: Option<&str>,
+    ) -> Result<TorrentId, SudoratioError> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(SudoratioError::EngineShuttingDown);
         }
+        let preset_id = preset_id.unwrap_or(crate::preset::DEFAULT_PRESET_ID);
+        let preset = self
+            .presets
+            .get(preset_id)
+            .ok_or(SudoratioError::TorrentNotFound)?;
         let id = TorrentId(meta.info_hash_bytes);
         let name: Arc<str> = meta.name.into();
         let ih: Arc<str> = meta.info_hash.clone().into();
@@ -352,8 +610,6 @@ impl Engine {
         } else {
             0
         };
-        // Build the entry before claiming the shard: `entry()` holds a write-lock that would
-        // self-deadlock if held across `next_queue_position` (which iterates the same map).
         let queue_position = scheduler::slots::next_queue_position(self);
         let entry = TorrentEntry {
             name: name.clone(),
@@ -379,6 +635,8 @@ impl Engine {
                 zero_leechers_since: None,
             }),
             dirty: AtomicBool::new(true),
+            preset_id: parking_lot::RwLock::new(preset.id.clone()),
+            policy: parking_lot::RwLock::new(preset.policy.clone()),
         };
         match self.torrents.entry(id) {
             dashmap::Entry::Occupied(_) => {
@@ -399,6 +657,7 @@ impl Engine {
             "added metainfo torrent"
         );
         scheduler::request_slot_for_torrent(self, id).await;
+        self.persist_torrent(id);
         Ok(id)
     }
 
@@ -445,17 +704,9 @@ impl Engine {
         crate::wire::spawn_dials(self.clone(), tid.0, out.peers.clone());
     }
 
-    /// Register the torrent with the bandwidth dispatcher using current config bounds.
+    /// Register the torrent with the bandwidth dispatcher reading bounds from its preset policy.
     pub(crate) fn register_bandwidth_for_torrent(&self, tid: TorrentId) {
-        let cfg = self.config.load();
-        self.bandwidth.register_torrent(
-            tid,
-            cfg.min_download_speed,
-            cfg.max_download_speed,
-            cfg.min_upload_speed,
-            cfg.max_upload_speed,
-            &self.torrents,
-        );
+        self.bandwidth.register_torrent(tid, &self.torrents);
     }
 
     /// Bind the BT peer listener. Idempotent.
@@ -540,11 +791,17 @@ impl Engine {
                 TorrentState::Stopped(_) => {}
             }
         }
+        let max_active_total: usize = self
+            .presets
+            .list()
+            .iter()
+            .map(|p| p.policy.load().max_active_torrents.max(1))
+            .sum();
         SeedingStatus {
             running: !self.shutting_down.load(Ordering::SeqCst),
             upload_speed: self.bandwidth.total_upload_speed(),
             download_speed: self.bandwidth.global_download_speed(),
-            max_active_torrents: self.config.load().max_active_torrents,
+            max_active_torrents: max_active_total,
             active_torrents: active,
             waiting_torrents: waiting,
             tracked_metainfo_torrents: metainfo_count,
@@ -570,19 +827,58 @@ impl Engine {
         v
     }
 
+    /// Paginated list. `preset_id = Some(id)` filters; `None` returns all.
+    /// Returns `(items, total_after_filter)`. Sort: by `queue_position`, then `id`.
+    pub async fn list_torrents_paginated(
+        &self,
+        preset_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<Torrent>, usize) {
+        let mut all: Vec<Torrent> = self
+            .torrents
+            .iter()
+            .filter(|r| match preset_id {
+                Some(id) => r.value().preset_id() == id,
+                None => true,
+            })
+            .map(|r| self.torrent_snapshot(*r.key(), r.value()))
+            .collect();
+        all.sort_by(|a, b| a.queue_position.cmp(&b.queue_position).then(a.id.cmp(&b.id)));
+        let total = all.len();
+        let items: Vec<Torrent> = all.into_iter().skip(offset).take(limit).collect();
+        (items, total)
+    }
+
     /// Per-torrent pause: leave registered, free a slot, send `stopped` if it was active.
     pub async fn pause_torrent(&self, id: TorrentId) -> Result<(), SudoratioError> {
-        scheduler::user_stop_torrent(self, id).await
+        scheduler::user_stop_torrent(self, id).await?;
+        self.persist_torrent(id);
+        Ok(())
     }
 
     /// Resume after [`Self::pause_torrent`]; re-enters the wait queue or starts immediately if a slot is free.
     pub async fn resume_torrent(&self, id: TorrentId) -> Result<(), SudoratioError> {
-        scheduler::user_resume_torrent(self, id).await
+        scheduler::user_resume_torrent(self, id).await?;
+        self.persist_torrent(id);
+        Ok(())
     }
 
     /// Remove the torrent from the engine (and session export); `stopped` if it had contacted the tracker.
     pub async fn remove_torrent(&self, id: TorrentId) -> Result<(), SudoratioError> {
-        scheduler::remove_torrent(self, id).await
+        let info_hash = self.torrents.get(&id).and_then(|e| {
+            e.info_hash.as_ref().map(|s| s.to_string())
+        });
+        scheduler::remove_torrent(self, id).await?;
+        if let Some(h) = info_hash {
+            let db = self.db.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = db.delete_torrent(&h) {
+                    tracing::warn!(error = %e, "torrent delete persist failed");
+                }
+            });
+        }
+        Ok(())
     }
 
     /// Subscribe to the engine's announce trace stream. Each successful or failed announce produces
@@ -622,10 +918,22 @@ impl Engine {
 
     /// Restore one torrent (e.g. from SQLite session). Skips if already present.
     pub async fn restore_torrent(&self, b: Torrent) -> Result<(), SudoratioError> {
+        self.restore_torrent_with_preset(b, None).await
+    }
+
+    pub async fn restore_torrent_with_preset(
+        &self,
+        b: Torrent,
+        preset_id: Option<&str>,
+    ) -> Result<(), SudoratioError> {
         let slot = match self.torrents.entry(b.id) {
             dashmap::Entry::Occupied(_) => return Ok(()),
             dashmap::Entry::Vacant(slot) => slot,
         };
+        let preset = self
+            .presets
+            .get(preset_id.unwrap_or(crate::preset::DEFAULT_PRESET_ID))
+            .unwrap_or_else(|| self.presets.ensure_default());
         let r = b.runtime.clone();
         let name: Arc<str> = b.name.into();
         let ih = b.info_hash.as_ref().map(|s| Arc::from(s.as_str()));
@@ -660,6 +968,8 @@ impl Engine {
                 zero_leechers_since: None,
             }),
             dirty: AtomicBool::new(false),
+            preset_id: parking_lot::RwLock::new(preset.id.clone()),
+            policy: parking_lot::RwLock::new(preset.policy.clone()),
         };
         slot.insert(entry);
         Ok(())
@@ -667,8 +977,7 @@ impl Engine {
 
     pub const RESTORE_STARTED_JITTER_SECS: u64 = 30;
 
-    /// Finalize a batch of [`Self::restore_torrent`] calls: jittered slot promotion.
-    /// Bandwidth registration happens later, on the post-Started handler.
+    /// After a batch of restore_torrent calls, promote with jitter.
     pub async fn finish_restore(&self, jitter_max_secs: u64) {
         scheduler::try_fill_slots_with_jitter(self, jitter_max_secs).await;
     }
@@ -743,4 +1052,46 @@ fn shuffle_tiers(tiers: &mut [Vec<String>]) {
     for tier in tiers.iter_mut() {
         tier.shuffle(&mut rng);
     }
+}
+
+fn build_engine(
+    config: EngineConfig,
+    db: Persistence,
+    data_dir: Option<PathBuf>,
+) -> anyhow::Result<Arc<Engine>> {
+    let http = config.http_tracker.build_reqwest_client();
+    let bandwidth = Arc::new(BandwidthDispatcher::new(config.bandwidth_tick_ms.max(1)));
+    let announce_concurrency = if config.max_concurrent_announces > 0 {
+        Some(Arc::new(tokio::sync::Semaphore::new(
+            config.max_concurrent_announces.max(1),
+        )))
+    } else {
+        None
+    };
+    let dial_cap = config.outbound_dial_max_concurrent_global.max(1);
+    let presets = Arc::new(PresetRegistry::new());
+    Ok(Arc::new(Engine {
+        config: arc_swap::ArcSwap::from_pointee(config),
+        presets,
+        db,
+        data_dir,
+        profiles: DashMap::new(),
+        active_profile: RwLock::new(None),
+        torrents: DashMap::new(),
+        http,
+        bandwidth,
+        shutting_down: AtomicBool::new(false),
+        seeding_state: PlMutex::new(SeedingState::default()),
+        seeding_task: Mutex::new(None),
+        announce_concurrency,
+        announce_inflight: AtomicUsize::new(0),
+        orchestrator_notify: Arc::new(tokio::sync::Notify::new()),
+        identities: Default::default(),
+        tracker_reported_ip: PlMutex::new(TrackerReportedIpCache::default()),
+        announce_sink: PlMutex::new(None),
+        state_change_notify: Arc::new(tokio::sync::Notify::new()),
+        listening_port: AtomicU16::new(0),
+        peer_listener_task: Mutex::new(None),
+        dial_global_sem: Arc::new(tokio::sync::Semaphore::new(dial_cap)),
+    }))
 }

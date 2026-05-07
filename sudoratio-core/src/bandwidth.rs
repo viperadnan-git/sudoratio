@@ -139,22 +139,24 @@ impl BandwidthDispatcher {
         self.tick_ms
     }
 
-    /// Register a new torrent with min/max download and upload speeds in **decimal KB/s**.
+    /// Register a torrent reading its bandwidth bounds from its preset policy.
     pub fn register_torrent(
         &self,
         id: TorrentId,
-        min_download_speed: u64,
-        max_download_speed: u64,
-        min_upload_speed: u64,
-        max_upload_speed: u64,
         torrent_rows: &DashMap<TorrentId, TorrentEntry>,
     ) {
-        let min_download_speed = kb_to_bytes_per_sec(min_download_speed);
-        let max_download_speed = kb_to_bytes_per_sec(max_download_speed).max(min_download_speed);
+        let Some(row) = torrent_rows.get(&id) else {
+            return;
+        };
+        let policy = row.policy_snapshot();
+        drop(row);
+        let min_download_speed = kb_to_bytes_per_sec(policy.min_download_speed);
+        let max_download_speed =
+            kb_to_bytes_per_sec(policy.max_download_speed).max(min_download_speed);
         let download_cap = sample_speed_range(min_download_speed, max_download_speed);
 
-        let min_upload_speed = kb_to_bytes_per_sec(min_upload_speed);
-        let max_upload_speed = kb_to_bytes_per_sec(max_upload_speed).max(min_upload_speed);
+        let min_upload_speed = kb_to_bytes_per_sec(policy.min_upload_speed);
+        let max_upload_speed = kb_to_bytes_per_sec(policy.max_upload_speed).max(min_upload_speed);
         let upload_cap = sample_speed_range(min_upload_speed, max_upload_speed);
 
         let e = TorrentEntryBw {
@@ -211,28 +213,29 @@ impl BandwidthDispatcher {
         e.upload_cap.store(up, Ordering::Relaxed);
     }
 
-    /// Apply new global min/max bounds to every registered torrent and resample each cap.
-    /// Caller passes values in **decimal KB/s**; conversion happens here.
-    pub fn apply_bounds(
+    /// Sync one torrent's bandwidth bounds to its current preset policy. Used after
+    /// `move_torrent` and after a preset PATCH that touches speed bounds.
+    pub fn sync_torrent_to_policy(
         &self,
-        min_download_speed: u64,
-        max_download_speed: u64,
-        min_upload_speed: u64,
-        max_upload_speed: u64,
+        id: TorrentId,
         torrent_rows: &DashMap<TorrentId, TorrentEntry>,
     ) {
-        let min_dl = kb_to_bytes_per_sec(min_download_speed);
-        let max_dl = kb_to_bytes_per_sec(max_download_speed).max(min_dl);
-        let min_ul = kb_to_bytes_per_sec(min_upload_speed);
-        let max_ul = kb_to_bytes_per_sec(max_upload_speed).max(min_ul);
-        for e in self.torrents.iter() {
-            e.min_download_speed.store(min_dl, Ordering::Relaxed);
-            e.max_download_speed.store(max_dl, Ordering::Relaxed);
-            e.min_upload_speed.store(min_ul, Ordering::Relaxed);
-            e.max_upload_speed.store(max_ul, Ordering::Relaxed);
-            e.download_cap
+        let Some(row) = torrent_rows.get(&id) else {
+            return;
+        };
+        let policy = row.policy_snapshot();
+        let min_dl = kb_to_bytes_per_sec(policy.min_download_speed);
+        let max_dl = kb_to_bytes_per_sec(policy.max_download_speed).max(min_dl);
+        let min_ul = kb_to_bytes_per_sec(policy.min_upload_speed);
+        let max_ul = kb_to_bytes_per_sec(policy.max_upload_speed).max(min_ul);
+        if let Some(r) = self.torrents.get(&id) {
+            r.min_download_speed.store(min_dl, Ordering::Relaxed);
+            r.max_download_speed.store(max_dl, Ordering::Relaxed);
+            r.min_upload_speed.store(min_ul, Ordering::Relaxed);
+            r.max_upload_speed.store(max_ul, Ordering::Relaxed);
+            r.download_cap
                 .store(sample_speed_range(min_dl, max_dl), Ordering::Relaxed);
-            e.upload_cap
+            r.upload_cap
                 .store(sample_speed_range(min_ul, max_ul), Ordering::Relaxed);
         }
         self.recompute_with_torrent_rows(torrent_rows);

@@ -13,7 +13,7 @@ use tracing::Level;
 
 use crate::auth;
 use crate::routes;
-use crate::state::{persist_all, AppState};
+use crate::state::AppState;
 use crate::static_assets;
 
 /// `/api/v1/*` routes — gated by [`auth::require_bearer`].
@@ -60,6 +60,20 @@ fn api_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/torrents/{info_hash}/resume",
             post(routes::torrents::resume),
         )
+        .route(
+            "/torrents/{info_hash}/preset",
+            post(routes::torrents::assign_preset),
+        )
+        .route(
+            "/presets",
+            get(routes::presets::list).post(routes::presets::create),
+        )
+        .route(
+            "/presets/{id}",
+            get(routes::presets::get)
+                .patch(routes::presets::update)
+                .delete(routes::presets::delete),
+        )
         .route("/stats", get(routes::stats::stats))
         .route(
             "/diagnostics/connectivity",
@@ -101,7 +115,6 @@ pub async fn run(
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             shutdown_state.core.shutdown().await;
-            persist_all(&shutdown_state).await;
         })
         .await?;
     Ok(())

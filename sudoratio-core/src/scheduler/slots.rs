@@ -20,22 +20,38 @@ fn is_eligible(inner: &Engine, tid: TorrentId) -> bool {
     !e.tiers.read().iter().all(|t| t.is_empty()) && !e.lifecycle().is_stopped()
 }
 
-fn count_active(inner: &Engine) -> usize {
+fn preset_id_of(inner: &Engine, tid: TorrentId) -> Option<String> {
+    inner.torrents.get(&tid).map(|e| e.preset_id())
+}
+
+fn count_active_in_preset(inner: &Engine, preset_id: &str) -> usize {
     inner
         .torrents
         .iter()
-        .filter(|r| r.lifecycle().is_active())
+        .filter(|r| r.lifecycle().is_active() && r.preset_id() == preset_id)
         .count()
 }
 
-/// Lowest-`queue_position` torrent currently in the `Queued` state.
-fn next_queued(inner: &Engine) -> Option<TorrentId> {
+fn cap_for_preset(inner: &Engine, preset_id: &str) -> usize {
+    inner
+        .presets
+        .get(preset_id)
+        .map(|p| p.policy.load().max_active_torrents.max(1))
+        .unwrap_or(1)
+}
+
+/// Lowest-`queue_position` torrent currently `Queued` within `preset_id`.
+fn next_queued_in_preset(inner: &Engine, preset_id: &str) -> Option<TorrentId> {
     inner
         .torrents
         .iter()
-        .filter(|r| r.lifecycle() == TorrentState::Queued)
+        .filter(|r| r.lifecycle() == TorrentState::Queued && r.preset_id() == preset_id)
         .min_by_key(|r| (r.queue_position(), r.key().0))
         .map(|r| *r.key())
+}
+
+fn all_preset_ids(inner: &Engine) -> Vec<String> {
+    inner.presets.list().iter().map(|p| p.id.clone()).collect()
 }
 
 async fn promote_to_active(inner: &Engine, tid: TorrentId, delay: Duration) {
@@ -65,13 +81,15 @@ pub(crate) async fn try_fill_slots_with_jitter(inner: &Engine, max_secs: u64) {
 }
 
 async fn fill_slots(inner: &Engine, jitter_max_secs: u64) {
-    let cap = inner.config.load().max_active_torrents.max(1);
-    while count_active(inner) < cap {
-        let Some(tid) = next_queued(inner) else {
-            break;
-        };
-        let delay = sample_delay(jitter_max_secs);
-        promote_to_active(inner, tid, delay).await;
+    for preset_id in all_preset_ids(inner) {
+        let cap = cap_for_preset(inner, &preset_id);
+        while count_active_in_preset(inner, &preset_id) < cap {
+            let Some(tid) = next_queued_in_preset(inner, &preset_id) else {
+                break;
+            };
+            let delay = sample_delay(jitter_max_secs);
+            promote_to_active(inner, tid, delay).await;
+        }
     }
 }
 
@@ -171,6 +189,50 @@ pub(crate) async fn user_resume_torrent(
     Ok(())
 }
 
+/// Move a torrent to a different preset. Frees the old preset's slot accounting and lets the
+/// next fill_slots round promote from the new preset's queue if capacity allows.
+pub(crate) async fn move_torrent_to_preset(
+    inner: &Engine,
+    tid: TorrentId,
+    new_preset_id: &str,
+) -> Result<(), SudoratioError> {
+    let new_preset = inner
+        .presets
+        .get(new_preset_id)
+        .ok_or(SudoratioError::TorrentNotFound)?;
+    let prev_preset_id = preset_id_of(inner, tid).ok_or(SudoratioError::TorrentNotFound)?;
+    if prev_preset_id == new_preset_id {
+        return Ok(());
+    }
+    let was_active = if let Some(e) = inner.torrents.get(&tid) {
+        e.set_preset(new_preset_id.to_string(), new_preset.policy.clone());
+        e.lifecycle().is_active()
+    } else {
+        return Err(SudoratioError::TorrentNotFound);
+    };
+    inner
+        .bandwidth
+        .sync_torrent_to_policy(tid, &inner.torrents);
+    if was_active {
+        let cap = cap_for_preset(inner, new_preset_id);
+        let active_in_new = count_active_in_preset(inner, new_preset_id);
+        if active_in_new > cap {
+            // New preset is over-cap: park the moved torrent at the head of its new queue.
+            if let Some(e) = inner.torrents.get(&tid) {
+                e.set_lifecycle(TorrentState::Queued);
+            }
+            {
+                let mut st = inner.seeding_state.lock();
+                st.delay.remove_torrent(tid);
+            }
+            inner.orchestrator_notify.notify_one();
+            inner.bandwidth.unregister_torrent(tid, &inner.torrents);
+        }
+    }
+    try_fill_slots(inner).await;
+    Ok(())
+}
+
 /// Remove from the engine entirely.
 pub(crate) async fn remove_torrent(inner: &Engine, tid: TorrentId) -> Result<(), SudoratioError> {
     let row = inner.torrents.get(&tid).map(|r| {
@@ -209,14 +271,22 @@ pub(crate) async fn remove_torrent(inner: &Engine, tid: TorrentId) -> Result<(),
 #[cfg(test)]
 mod tests {
     use crate::config::EngineConfig;
+    use crate::preset::{PresetPolicy, PresetPolicyUpdate, DEFAULT_PRESET_ID};
     use crate::state::Engine;
     use crate::torrent::MetainfoTorrent;
 
-    fn cfg_with_cap(cap: usize) -> EngineConfig {
-        EngineConfig {
-            max_active_torrents: cap,
-            ..Default::default()
-        }
+    fn engine_with_cap(cap: usize) -> std::sync::Arc<Engine> {
+        let e = Engine::new_in_memory(EngineConfig::default());
+        e.presets
+            .apply_policy(
+                DEFAULT_PRESET_ID,
+                PresetPolicyUpdate {
+                    max_active_torrents: Some(cap),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        e
     }
 
     fn meta(name: &str, hash: u8) -> MetainfoTorrent {
@@ -234,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn cap_one_keeps_extras_in_wait_queue() {
-        let engine = Engine::new(cfg_with_cap(1));
+        let engine = engine_with_cap(1);
         let _ = engine.add_torrent_metainfo(meta("a", 1)).await;
         let _ = engine.add_torrent_metainfo(meta("b", 2)).await;
         let _ = engine.add_torrent_metainfo(meta("c", 3)).await;
@@ -246,12 +316,21 @@ mod tests {
 
     #[tokio::test]
     async fn growing_cap_promotes_waiting_torrents() {
-        let engine = Engine::new(cfg_with_cap(1));
+        let engine = engine_with_cap(1);
         for i in 1..=4 {
             let _ = engine.add_torrent_metainfo(meta(&format!("t{i}"), i)).await;
         }
         assert_eq!(engine.stats().await.waiting_torrents, 3);
-        engine.update_config(cfg_with_cap(3)).await;
+        engine
+            .update_preset_policy(
+                DEFAULT_PRESET_ID,
+                PresetPolicyUpdate {
+                    max_active_torrents: Some(3),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         let stats = engine.stats().await;
         assert_eq!(stats.active_torrents, 3);
         assert_eq!(stats.waiting_torrents, 1);
@@ -260,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn paused_torrent_is_ineligible() {
-        let engine = Engine::new(cfg_with_cap(2));
+        let engine = engine_with_cap(2);
         let id = engine.add_torrent_metainfo(meta("p", 7)).await.unwrap();
         engine.pause_torrent(id).await.unwrap();
         let stats = engine.stats().await;
@@ -270,4 +349,8 @@ mod tests {
         assert_eq!(engine.stats().await.active_torrents, 1);
         engine.shutdown().await;
     }
+
+    // Silences unused-import warning when not all helpers consumed in this file.
+    #[allow(dead_code)]
+    fn _phantom(_: PresetPolicy) {}
 }

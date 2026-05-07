@@ -21,25 +21,26 @@ use crate::torrent::{
 const MAX_CONSECUTIVE_FAILS: u32 = 5;
 
 pub(crate) fn should_pause_tiny_swarm(inner: &Engine, tid: TorrentId) -> bool {
-    let min = inner.config.load().min_swarm_seeders_to_seed;
-    if min == 0 {
-        return false;
-    }
     let Some(e) = inner.torrents.get(&tid) else {
         return false;
     };
+    let policy = e.policy_snapshot();
+    let min = policy.min_swarm_seeders_to_seed;
+    if min == 0 {
+        return false;
+    }
     let seeders = e.with_state(|s| s.last_seeders);
     matches!(seeders, Some(n) if n < min)
 }
 
 pub(crate) fn should_pause_no_leechers(inner: &Engine, tid: TorrentId) -> bool {
-    let cfg = inner.config.load();
-    if !cfg.pause_torrent_with_zero_leechers {
-        return false;
-    }
     let Some(e) = inner.torrents.get(&tid) else {
         return false;
     };
+    let policy = e.policy_snapshot();
+    if !policy.pause_torrent_with_zero_leechers {
+        return false;
+    }
     let since = e.with_state(|s| s.zero_leechers_since);
     let Some(since_ms) = since else {
         return false;
@@ -49,7 +50,7 @@ pub(crate) fn should_pause_no_leechers(inner: &Engine, tid: TorrentId) -> bool {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let elapsed_secs = now_ms.saturating_sub(since_ms) / 1000;
-    elapsed_secs >= cfg.pause_torrent_with_zero_leechers_grace
+    elapsed_secs >= policy.pause_torrent_with_zero_leechers_grace
 }
 
 fn tracker_reschedule_delay_secs(
@@ -222,7 +223,11 @@ async fn handle_queued_announce(inner: Arc<Engine>, tid: TorrentId, ev: Announce
                 return;
             }
             inner.reset_consecutive_fails(tid);
-            let jitter = inner.config.load().max_announce_jitter;
+            let jitter = inner
+                .torrents
+                .get(&tid)
+                .map(|e| e.policy_snapshot().max_announce_jitter)
+                .unwrap_or(0);
             let iv = Duration::from_secs(u64::from(tracker_reschedule_delay_secs(&out, jitter)));
             delay_schedule(&inner, tid, AnnounceEvent::None, iv).await;
         }

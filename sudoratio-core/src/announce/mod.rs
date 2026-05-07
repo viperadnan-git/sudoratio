@@ -383,13 +383,13 @@ impl Engine {
     }
 
     pub(crate) fn has_reached_upload_ratio_limit(&self, tid: TorrentId) -> bool {
-        let target = self.config.load().upload_ratio_target;
-        if target < 0.0 {
-            return false;
-        }
         let Some(e) = self.torrents.get(&tid) else {
             return false;
         };
+        let target = e.policy_snapshot().upload_ratio_target;
+        if target < 0.0 {
+            return false;
+        }
         if e.download_first && e.transfer_phase() != TransferPhase::Seeding {
             return false;
         }

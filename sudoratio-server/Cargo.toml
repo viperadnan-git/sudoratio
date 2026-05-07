@@ -19,7 +19,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 rust-embed = { version = "8", features = ["mime-guess"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
 axum = { version = "0.8", features = ["multipart"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dotenvy = "0.15"
@@ -33,7 +32,6 @@ tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
 http = "1"
