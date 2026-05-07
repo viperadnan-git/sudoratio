@@ -47,6 +47,8 @@ pub enum SudoratioError {
     TrackerBencode(String),
     #[error("announce query: {0}")]
     PlaceholderBuild(String),
+    #[error("target preset uses a different client profile; delete and re-add the torrent under the new preset to switch identity")]
+    PresetClientMismatch,
 }
 
 impl SudoratioError {
@@ -71,6 +73,7 @@ impl SudoratioError {
             Self::TrackerFailure(_) => "tracker_failure",
             Self::TrackerBencode(_) => "tracker_bencode",
             Self::PlaceholderBuild(_) => "placeholder_build",
+            Self::PresetClientMismatch => "preset_client_mismatch",
         }
     }
 

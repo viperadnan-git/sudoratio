@@ -136,6 +136,7 @@ export function TorrentActions({ t }: { t: Torrent }) {
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         selectedId={t.preset_id}
+        enforceClientMatch
         onSelect={async (presetId) => {
           if (presetId === t.preset_id) {
             setPickerOpen(false);

@@ -442,13 +442,21 @@ function AnnouncesConsole({
 function AnnounceLine({ a, prev }: { a: AnnounceTrace; prev?: AnnounceTrace }) {
   const [open, setOpen] = useState(false);
 
-  // Deltas vs previous announce (only for byte fields that grow or shrink)
-  const deltaUp = prev
-    ? a.request.params.uploaded - prev.request.params.uploaded
-    : null;
-  const deltaDn = prev
-    ? a.request.params.downloaded - prev.request.params.downloaded
-    : null;
+  // Deltas vs previous announce. For up/down we show the *rate* (bytes/sec)
+  // computed as Δbytes / Δt; for `left` we keep the raw byte delta since it
+  // reflects download progress, not a sustained speed.
+  const dtSec =
+    prev && a.announced_at > prev.announced_at
+      ? (a.announced_at - prev.announced_at) / 1000
+      : null;
+  const speedUp =
+    prev && dtSec
+      ? (a.request.params.uploaded - prev.request.params.uploaded) / dtSec
+      : null;
+  const speedDn =
+    prev && dtSec
+      ? (a.request.params.downloaded - prev.request.params.downloaded) / dtSec
+      : null;
   const deltaLeft = prev
     ? a.request.params.left - prev.request.params.left
     : null;
@@ -491,11 +499,11 @@ function AnnounceLine({ a, prev }: { a: AnnounceTrace; prev?: AnnounceTrace }) {
           tr#{a.tracker_index}
         </span>
 
-        <SizeDeltaChip
+        <SizeSpeedChip
           up={a.request.params.uploaded}
           down={a.request.params.downloaded}
-          upDelta={deltaUp}
-          downDelta={deltaDn}
+          upSpeed={speedUp}
+          downSpeed={speedDn}
         />
 
         <span className="fade-x min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground/70">
@@ -550,14 +558,14 @@ function AnnounceLine({ a, prev }: { a: AnnounceTrace; prev?: AnnounceTrace }) {
             <DetailRow label="Uploaded">
               <ByteVal
                 bytes={a.request.params.uploaded}
-                delta={deltaUp}
+                speed={speedUp}
                 grow="up"
               />
             </DetailRow>
             <DetailRow label="Downloaded">
               <ByteVal
                 bytes={a.request.params.downloaded}
-                delta={deltaDn}
+                speed={speedDn}
                 grow="up"
               />
             </DetailRow>
@@ -654,16 +662,19 @@ function DetailRow({
 function ByteVal({
   bytes,
   delta,
+  speed,
   grow,
 }: {
   bytes: number;
-  delta: number | null;
+  delta?: number | null;
+  speed?: number | null;
   grow: "up" | "down";
 }) {
-  const hasGrowth = delta !== null && Math.abs(delta) > 0;
+  const change = speed ?? delta ?? null;
+  const hasGrowth = change !== null && Math.abs(change) > 0;
   const isExpected =
-    delta !== null &&
-    ((grow === "up" && delta > 0) || (grow === "down" && delta < 0));
+    change !== null &&
+    ((grow === "up" && change > 0) || (grow === "down" && change < 0));
 
   return (
     <span className="inline-flex items-center gap-2">
@@ -675,14 +686,16 @@ function ByteVal({
             isExpected ? "text-success" : "text-warn",
           )}
         >
-          {delta > 0 ? (
+          {change > 0 ? (
             <TrendingUp className="size-3" strokeWidth={2} />
           ) : (
             <TrendingDown className="size-3" strokeWidth={2} />
           )}
           <span className="num">
-            {delta > 0 ? "+" : ""}
-            {fmtBytes(Math.abs(delta))}
+            {change > 0 ? "+" : "−"}
+            {speed != null
+              ? fmtSpeed(Math.abs(speed))
+              : fmtBytes(Math.abs(change))}
           </span>
         </span>
       )}
@@ -692,16 +705,16 @@ function ByteVal({
 
 /* ─────────────────────────── size + delta chip ─────────────────────── */
 
-function SizeDeltaChip({
+function SizeSpeedChip({
   up,
   down,
-  upDelta,
-  downDelta,
+  upSpeed,
+  downSpeed,
 }: {
   up: number;
   down: number;
-  upDelta: number | null;
-  downDelta: number | null;
+  upSpeed: number | null;
+  downSpeed: number | null;
 }) {
   const sign = (n: number) => (n > 0 ? "+" : "−");
   if (up === 0 && down === 0) return null;
@@ -711,16 +724,16 @@ function SizeDeltaChip({
         <span
           className="inline-flex items-baseline gap-1"
           title={`uploaded ${fmtBytes(up)}${
-            upDelta && upDelta !== 0
-              ? ` (${sign(upDelta)}${fmtBytes(Math.abs(upDelta))})`
+            upSpeed && upSpeed !== 0
+              ? ` (${sign(upSpeed)}${fmtSpeed(Math.abs(upSpeed))})`
               : ""
           }`}
         >
           <span className="text-foreground/80">↑{fmtBytes(up)}</span>
-          {upDelta !== null && upDelta !== 0 && (
-            <span className={cn(upDelta > 0 ? "text-success" : "text-warn")}>
-              {sign(upDelta)}
-              {fmtBytes(Math.abs(upDelta))}
+          {upSpeed !== null && upSpeed !== 0 && (
+            <span className={cn(upSpeed > 0 ? "text-success" : "text-warn")}>
+              {sign(upSpeed)}
+              {fmtSpeed(Math.abs(upSpeed))}
             </span>
           )}
         </span>
@@ -729,16 +742,16 @@ function SizeDeltaChip({
         <span
           className="inline-flex items-baseline gap-1"
           title={`downloaded ${fmtBytes(down)}${
-            downDelta && downDelta !== 0
-              ? ` (${sign(downDelta)}${fmtBytes(Math.abs(downDelta))})`
+            downSpeed && downSpeed !== 0
+              ? ` (${sign(downSpeed)}${fmtSpeed(Math.abs(downSpeed))})`
               : ""
           }`}
         >
           <span className="text-foreground/80">↓{fmtBytes(down)}</span>
-          {downDelta !== null && downDelta !== 0 && (
-            <span className={cn(downDelta > 0 ? "text-signal" : "text-warn")}>
-              {sign(downDelta)}
-              {fmtBytes(Math.abs(downDelta))}
+          {downSpeed !== null && downSpeed !== 0 && (
+            <span className={cn(downSpeed > 0 ? "text-signal" : "text-warn")}>
+              {sign(downSpeed)}
+              {fmtSpeed(Math.abs(downSpeed))}
             </span>
           )}
         </span>

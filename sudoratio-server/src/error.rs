@@ -14,7 +14,8 @@ pub fn status_for(e: &SudoratioError) -> StatusCode {
         | SeedingAlreadyRunning
         | EngineShuttingDown
         | TorrentNotActive
-        | TorrentAlreadyExists(_) => StatusCode::CONFLICT,
+        | TorrentAlreadyExists(_)
+        | PresetClientMismatch => StatusCode::CONFLICT,
         Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         Json(_)
         | ClientProfileParse(_)

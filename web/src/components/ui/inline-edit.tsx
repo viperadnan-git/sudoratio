@@ -126,7 +126,7 @@ export function InlineEdit({
       aria-label={ariaLabel}
       disabled={disabled}
       className={cn(
-        "group -mx-1 inline-flex max-w-full cursor-text items-center gap-1.5 rounded-sm px-1 py-0.5 text-left transition-colors",
+        "group -mx-2 inline-flex h-8 max-w-full cursor-text items-center gap-1.5 rounded-md px-2 text-left transition-colors",
         "hover:bg-foreground/[0.04] focus-visible:bg-foreground/[0.05] focus-visible:outline-1 focus-visible:outline-foreground/25",
         empty && "text-muted-foreground/45",
         disabled && "cursor-not-allowed opacity-60",
@@ -134,7 +134,7 @@ export function InlineEdit({
         textClassName,
       )}
     >
-      <span className="min-w-0 truncate">{display}</span>
+      <span className="whitespace-nowrap">{display}</span>
       {showAffordance && !disabled && (
         <Pencil
           aria-hidden="true"

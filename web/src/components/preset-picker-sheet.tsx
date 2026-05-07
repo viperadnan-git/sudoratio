@@ -1,6 +1,6 @@
 // Bottom sheet of presets — used to pick a preset (reassign / on-add / delete-reassign).
 
-import { Check } from "lucide-react";
+import { Check, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -10,7 +10,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { usePresets } from "@/lib/queries";
+import { usePresets, useProfiles } from "@/lib/queries";
+import type { Preset } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function PresetPickerSheet({
@@ -21,6 +22,9 @@ export function PresetPickerSheet({
   onSelect,
   title = "Move to preset",
   description,
+  /** When true, disable presets whose effective client profile differs from
+   * the currently selected one (cross-client moves are rejected by the engine). */
+  enforceClientMatch = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -29,9 +33,20 @@ export function PresetPickerSheet({
   onSelect: (presetId: string) => void;
   title?: string;
   description?: string;
+  enforceClientMatch?: boolean;
 }) {
   const { data: presets, isLoading } = usePresets();
+  const { data: profiles } = useProfiles();
   const items = (presets ?? []).filter((p) => p.id !== excludeId);
+
+  const activeDefaultId =
+    profiles?.find((p) => p.active)?.id ?? null;
+  const resolveProfile = (p: Preset): string | null =>
+    p.policy.client_profile_id ?? activeDefaultId;
+  const currentPreset = selectedId
+    ? (presets ?? []).find((p) => p.id === selectedId) ?? null
+    : null;
+  const currentProfile = currentPreset ? resolveProfile(currentPreset) : null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -64,15 +79,27 @@ export function PresetPickerSheet({
           )}
           {items.map((p) => {
             const active = p.id === selectedId;
+            const mismatch =
+              enforceClientMatch &&
+              currentPreset != null &&
+              resolveProfile(p) !== currentProfile;
+            const disabled = mismatch;
             return (
               <button
                 key={p.id}
                 type="button"
-                onClick={() => onSelect(p.id)}
+                onClick={() => !disabled && onSelect(p.id)}
+                disabled={disabled}
                 data-active={active}
+                title={
+                  mismatch
+                    ? "Different client profile — delete and re-add the torrent to switch identity"
+                    : undefined
+                }
                 className={cn(
-                  "group flex w-full cursor-pointer items-center gap-3 rounded-md border border-transparent bg-transparent px-3 py-2.5 text-left transition-colors",
-                  "hover:bg-foreground/[0.04] active:bg-foreground/[0.08]",
+                  "group flex w-full items-center gap-3 rounded-md border border-transparent bg-transparent px-3 py-2.5 text-left transition-colors",
+                  "enabled:cursor-pointer enabled:hover:bg-foreground/[0.04] enabled:active:bg-foreground/[0.08]",
+                  "disabled:cursor-not-allowed disabled:opacity-45",
                   "data-[active=true]:bg-foreground/[0.05] data-[active=true]:border-border",
                 )}
               >
@@ -94,14 +121,24 @@ export function PresetPickerSheet({
                     #{p.id} · {p.policy.min_upload_speed}–
                     {p.policy.max_upload_speed} KB/s ·{" "}
                     {p.policy.max_active_torrents} slots
+                    {mismatch && (
+                      <span className="ml-1.5 text-amber-600/80 dark:text-amber-400/80">
+                        · different client
+                      </span>
+                    )}
                   </div>
                 </div>
-                {active && (
+                {mismatch ? (
+                  <Lock
+                    className="size-3.5 shrink-0 text-muted-foreground/60"
+                    strokeWidth={2}
+                  />
+                ) : active ? (
                   <Check
                     className="size-3.5 shrink-0 text-foreground/70"
                     strokeWidth={2}
                   />
-                )}
+                ) : null}
               </button>
             );
           })}

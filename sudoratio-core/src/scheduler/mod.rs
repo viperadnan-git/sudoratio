@@ -147,6 +147,12 @@ pub(crate) async fn run_loop(inner: Arc<Engine>) {
 /// Single auto-pause helper. Skips the `stopped` announce when the tracker
 /// is already known unreachable (`TrackerFailed`).
 pub(crate) async fn auto_pause(inner: &Engine, tid: TorrentId, reason: StopReason) {
+    let mode = if reason == StopReason::TrackerFailed {
+        slots::StopMode::Silent
+    } else {
+        slots::StopMode::Announce
+    };
+    slots::stop_torrent(inner, tid, mode).await;
     if let Some(e) = inner.torrents.get(&tid) {
         e.with_state(|s| {
             s.state = TorrentState::Stopped(reason);
@@ -156,17 +162,7 @@ pub(crate) async fn auto_pause(inner: &Engine, tid: TorrentId, reason: StopReaso
             }
         });
     }
-    inner.bandwidth.unregister_torrent(tid, &inner.torrents);
-    remove_from_active(inner, tid).await;
-    if reason != StopReason::TrackerFailed {
-        let _ = inner
-            .exec_tracker_announce(
-                tid,
-                AnnounceEvent::Stopped,
-                &AnnounceQueryOverrides::default(),
-            )
-            .await;
-    }
+    try_fill_slots(inner).await;
     inner.emit_state_change(tid);
 }
 

@@ -1,4 +1,4 @@
-// Wire types matching `sudoratio-core` shapes.
+// All types are defined in schemas.ts and inferred here, no new types should be added here.
 
 export type TorrentState = "downloading" | "seeding" | "queued" | "stopped";
 export type StopReason =
@@ -108,20 +108,17 @@ export interface SeedingStatus {
   tracked_metainfo_torrents: number;
 }
 
-export interface PresetPolicy {
-  min_upload_speed: number;
-  max_upload_speed: number;
-  min_download_speed: number;
-  max_download_speed: number;
-  max_active_torrents: number;
-  upload_ratio_target: number;
-  pause_torrent_with_zero_leechers: boolean;
-  pause_torrent_with_zero_leechers_grace: number;
-  min_swarm_seeders_to_seed: number;
-  max_announce_jitter: number;
-  /** `null` = inherit engine default. Otherwise a `client@version` variant id. */
-  client_profile_id: string | null;
-}
+// Form-shaped types (PresetPolicy, ConfigBody, etc.) are sourced from schemas.ts.
+export type {
+  ConfigBody,
+  ConfigUpdate,
+  PresetPolicy,
+  PresetPolicyUpdate,
+  PresetCreateBody,
+  PresetUpdateBody,
+} from "@/lib/schemas";
+
+import type { PresetPolicy } from "@/lib/schemas";
 
 export interface PresetRollup {
   torrent_count: number;
@@ -142,36 +139,6 @@ export interface Preset {
   /** Embedded rollup (lives next to the preset in /presets responses). */
   rollup: PresetRollup;
 }
-
-export type PresetPolicyUpdate = Partial<PresetPolicy>;
-
-export interface PresetUpdateBody {
-  name?: string;
-  color?: string;
-  policy?: PresetPolicyUpdate;
-}
-
-export interface PresetCreateBody {
-  id?: string;
-  name: string;
-  color: string;
-  policy?: PresetPolicy;
-}
-
-/** Engine infra config (per-tracker policy lives in presets). */
-export interface ConfigBody {
-  announce_port: number | null;
-  bandwidth_tick_ms: number;
-  max_concurrent_announces: number;
-  http_tracker_connect_timeout_secs: number | null;
-  http_tracker_request_timeout_secs: number | null;
-  http_tracker_max_idle_per_host: number | null;
-  http_tracker_max_redirects: number | null;
-  http_tracker_tcp_keepalive_secs: number | null;
-  http_tracker_pool_idle_timeout_secs: number | null;
-}
-
-export type ConfigUpdate = Partial<ConfigBody>;
 
 export interface ConnectivityFamily {
   reachable: boolean;

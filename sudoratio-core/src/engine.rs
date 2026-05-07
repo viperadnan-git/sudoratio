@@ -849,14 +849,8 @@ impl Engine {
         for tid in active_ids {
             let inner = self.clone();
             set.spawn(async move {
-                let _ = inner
-                    .exec_tracker_announce(
-                        tid,
-                        AnnounceEvent::Stopped,
-                        &AnnounceQueryOverrides::default(),
-                    )
+                scheduler::slots::stop_torrent(&inner, tid, scheduler::slots::StopMode::Announce)
                     .await;
-                inner.bandwidth.unregister_torrent(tid, &inner.torrents);
             });
         }
         while set.join_next().await.is_some() {}

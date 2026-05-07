@@ -140,26 +140,37 @@ pub(crate) async fn remove_from_active(inner: &Engine, tid: TorrentId) {
     try_fill_slots(inner).await;
 }
 
-/// User pause: mark `Stopped(User)`, send best-effort `stopped`, free slot.
-pub(crate) async fn user_stop_torrent(
-    inner: &Engine,
-    tid: TorrentId,
-) -> Result<(), SudoratioError> {
+/// Whether to tell the tracker we're leaving the swarm.
+///
+/// `Silent` is only for paths where the tracker is known unreachable
+/// (e.g. `TrackerFailed`); every other deactivation should `Announce`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopMode {
+    Announce,
+    Silent,
+}
+
+/// Centralized "leave the swarm" primitive — every active → not-active path
+/// goes through here. Drains the delay queue, unregisters bandwidth, and
+/// (when `mode == Announce`) emits a final `stopped` to the tracker.
+///
+/// Lifecycle is the caller's responsibility: invoke this BEFORE mutating
+/// state so the active-check reads the pre-transition lifecycle.
+pub(crate) async fn stop_torrent(inner: &Engine, tid: TorrentId, mode: StopMode) {
     let was_active = match inner.torrents.get(&tid) {
-        None => return Err(SudoratioError::TorrentNotFound),
-        Some(e) => {
-            let was = e.lifecycle().is_active();
-            e.set_lifecycle(TorrentState::Stopped(StopReason::User));
-            was
-        }
+        Some(e) => e.lifecycle().is_active(),
+        None => return,
     };
     {
         let mut st = inner.seeding_state.lock();
         st.delay.remove_torrent(tid);
     }
     inner.orchestrator_notify.notify_one();
-    if was_active {
-        inner.bandwidth.unregister_torrent(tid, &inner.torrents);
+    if !was_active {
+        return;
+    }
+    inner.bandwidth.unregister_torrent(tid, &inner.torrents);
+    if mode == StopMode::Announce {
         let _ = inner
             .exec_tracker_announce(
                 tid,
@@ -167,6 +178,20 @@ pub(crate) async fn user_stop_torrent(
                 &AnnounceQueryOverrides::default(),
             )
             .await;
+    }
+}
+
+/// User pause: mark `Stopped(User)`, send best-effort `stopped`, free slot.
+pub(crate) async fn user_stop_torrent(
+    inner: &Engine,
+    tid: TorrentId,
+) -> Result<(), SudoratioError> {
+    if !inner.torrents.contains_key(&tid) {
+        return Err(SudoratioError::TorrentNotFound);
+    }
+    stop_torrent(inner, tid, StopMode::Announce).await;
+    if let Some(e) = inner.torrents.get(&tid) {
+        e.set_lifecycle(TorrentState::Stopped(StopReason::User));
     }
     try_fill_slots(inner).await;
     Ok(())
@@ -204,64 +229,67 @@ pub(crate) async fn move_torrent_to_preset(
     if prev_preset_id == new_preset_id {
         return Ok(());
     }
-    let was_active = if let Some(e) = inner.torrents.get(&tid) {
+    let was_active = match inner.torrents.get(&tid) {
+        Some(e) => e.lifecycle().is_active(),
+        None => return Err(SudoratioError::TorrentNotFound),
+    };
+
+    // Reject cross-client moves: the torrent's tracker identity (peer_id /
+    // key / user-agent) is fixed for its lifetime in this engine — switching
+    // it mid-session would either lose accumulated counters or look like a
+    // fresh peer announcing non-zero bytes (anti-cheat fingerprint). Force
+    // the user to delete and re-add under the new preset instead.
+    let active_default = inner
+        .active_profile
+        .read()
+        .await
+        .as_ref()
+        .map(|p| p.0.clone());
+    let old_profile = inner
+        .torrents
+        .get(&tid)
+        .and_then(|e| e.policy_snapshot().client_profile_id.clone())
+        .or_else(|| active_default.clone());
+    let new_profile = new_preset
+        .policy
+        .load()
+        .client_profile_id
+        .clone()
+        .or_else(|| active_default.clone());
+    if old_profile != new_profile {
+        return Err(SudoratioError::PresetClientMismatch);
+    }
+
+    let no_free_slot = was_active
+        && count_active_in_preset(inner, new_preset_id) >= cap_for_preset(inner, new_preset_id);
+
+    if no_free_slot {
+        stop_torrent(inner, tid, StopMode::Announce).await;
+    }
+
+    if let Some(e) = inner.torrents.get(&tid) {
         e.set_preset(new_preset_id.to_string(), new_preset.policy.clone());
-        e.lifecycle().is_active()
+        if no_free_slot {
+            e.set_lifecycle(TorrentState::Queued);
+        }
     } else {
         return Err(SudoratioError::TorrentNotFound);
-    };
+    }
     inner
         .bandwidth
         .sync_torrent_to_policy(tid, &inner.torrents);
-    if was_active {
-        let cap = cap_for_preset(inner, new_preset_id);
-        let active_in_new = count_active_in_preset(inner, new_preset_id);
-        if active_in_new > cap {
-            // New preset is over-cap: park the moved torrent at the head of its new queue.
-            if let Some(e) = inner.torrents.get(&tid) {
-                e.set_lifecycle(TorrentState::Queued);
-            }
-            {
-                let mut st = inner.seeding_state.lock();
-                st.delay.remove_torrent(tid);
-            }
-            inner.orchestrator_notify.notify_one();
-            inner.bandwidth.unregister_torrent(tid, &inner.torrents);
-        }
-    }
+
     try_fill_slots(inner).await;
     Ok(())
 }
 
 /// Remove from the engine entirely.
 pub(crate) async fn remove_torrent(inner: &Engine, tid: TorrentId) -> Result<(), SudoratioError> {
-    let row = inner.torrents.get(&tid).map(|r| {
-        (
-            r.info_hash_bytes,
-            r.lifecycle().is_active(),
-            r.with_state(|s| s.last_successful_announce_unix_ms > 0),
-        )
-    });
-    let Some((info_hash_bytes, was_active, had_successful_announce)) = row else {
-        return Err(SudoratioError::TorrentNotFound);
+    let info_hash_bytes = match inner.torrents.get(&tid) {
+        Some(e) => e.info_hash_bytes,
+        None => return Err(SudoratioError::TorrentNotFound),
     };
-    {
-        let mut st = inner.seeding_state.lock();
-        st.delay.remove_torrent(tid);
-    }
-    inner.orchestrator_notify.notify_one();
-    if was_active {
-        inner.bandwidth.unregister_torrent(tid, &inner.torrents);
-    }
-    if was_active || had_successful_announce {
-        let _ = inner
-            .exec_tracker_announce(
-                tid,
-                AnnounceEvent::Stopped,
-                &AnnounceQueryOverrides::default(),
-            )
-            .await;
-    }
+    stop_torrent(inner, tid, StopMode::Announce).await;
     inner.forget_torrent_announce_keys(info_hash_bytes);
     inner.torrents.remove(&tid);
     try_fill_slots(inner).await;
