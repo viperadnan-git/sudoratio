@@ -68,6 +68,7 @@ fn api_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/presets",
             get(routes::presets::list).post(routes::presets::create),
         )
+        .route("/presets/defaults", get(routes::presets::defaults))
         .route(
             "/presets/{id}",
             get(routes::presets::get)

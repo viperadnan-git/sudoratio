@@ -12,6 +12,8 @@ import { useMemo, useState } from "react";
 import { z } from "zod";
 
 import { AddTorrentDialog } from "@/components/add-torrent-dialog";
+import { PresetChipStrip } from "@/components/preset-chip-strip";
+import { PresetPill } from "@/components/preset-pill";
 import { TorrentActions } from "@/components/torrent-actions";
 import { TorrentDetailSheet } from "@/components/torrent-detail-sheet";
 import { TorrentStatusBadge } from "@/components/torrent-status-badge";
@@ -23,8 +25,9 @@ import {
   fmtSpeed,
   shortHash,
 } from "@/lib/format";
-import { useConfig, useStats, useTorrents } from "@/lib/queries";
-import type { Torrent } from "@/lib/types";
+import { usePresetSelection } from "@/lib/preset-context";
+import { usePresets, useStats, useTorrents } from "@/lib/queries";
+import type { Preset, Torrent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const searchSchema = z.object({
@@ -98,25 +101,61 @@ function sortTorrents(rows: Torrent[], key: SortKey, dir: SortDir): Torrent[] {
 function TorrentsPage() {
   const navigate = useNavigate();
   const { selected } = Route.useSearch();
-  const { data, isLoading } = useTorrents();
-  const stats = useStats();
-  const cfg = useConfig();
-  const ratioTarget = cfg.data?.upload_ratio_target;
-  const pauseOnZL = cfg.data?.pause_torrent_with_zero_leechers;
-  const ratioLabel =
-    ratioTarget === undefined
+  const { activeId } = usePresetSelection();
+  const { data: presets } = usePresets();
+  // Pull a wide page so list-level sort works across all rows in the active scope.
+  const { data: page, isLoading } = useTorrents({
+    presetId: activeId,
+    offset: 0,
+    limit: 200,
+  });
+  const data = page?.items;
+  const stats = useStats(activeId);
+
+  // Active preset (when filtering): drive scoped policy hints and pill colors.
+  const activePreset =
+    activeId === "all"
       ? null
-      : ratioTarget <= 0
-        ? "target off"
-        : `target ${ratioTarget}×`;
+      : ((presets ?? []).find((p) => p.id === activeId) ?? null);
+  const ratioTarget = activePreset?.policy.upload_ratio_target;
+  const pauseOnZL = activePreset?.policy.pause_torrent_with_zero_leechers;
+  const slotCap = activePreset?.policy.max_active_torrents;
+  const ratioLabel =
+    activeId === "all"
+      ? "across all presets"
+      : ratioTarget == null
+        ? null
+        : ratioTarget <= 0
+          ? "target off"
+          : `target ${ratioTarget}×`;
   const pauseLabel =
-    pauseOnZL === undefined ? null : pauseOnZL ? "0L pause on" : "0L pause off";
+    activeId === "all"
+      ? null
+      : pauseOnZL == null
+        ? null
+        : pauseOnZL
+          ? "0L pause on"
+          : "0L pause off";
   const downloading = (data ?? []).filter((t) => t.state === "downloading");
   const totalLeft = downloading.reduce((sum, t) => sum + (t.left ?? 0), 0);
   const downloadSub =
     downloading.length === 0
       ? null
       : `${downloading.length} active · ${fmtBytes(totalLeft)} left`;
+  const presetById = useMemo(() => {
+    const m = new Map<string, Preset>();
+    for (const p of presets ?? []) m.set(p.id, p);
+    return m;
+  }, [presets]);
+  const totals = useMemo(() => {
+    const t: Record<string, number> = {
+      all: stats.data?.tracked_metainfo_torrents ?? 0,
+    };
+    for (const p of presets ?? []) {
+      t[p.id] = p.rollup?.torrent_count ?? 0;
+    }
+    return t;
+  }, [presets, stats.data]);
   const [sort, setSort] = useState<{
     key: SortKey;
     dir: SortDir;
@@ -144,15 +183,36 @@ function TorrentsPage() {
   return (
     <div className="px-3 pb-12 pt-4 md:px-6 md:pt-6">
       {/* ── Page header ── */}
-      <header className="mb-5 flex items-end justify-between gap-4 md:mb-7">
+      <header className="mb-3 flex items-end justify-between gap-4 md:mb-5">
         <div>
           <div className="eyebrow mb-1.5">Operations · Torrents</div>
-          <h1 className="text-[22px] font-semibold leading-tight tracking-tight md:text-[28px]">
-            Tracker pulse
+          <h1 className="flex items-center gap-2.5 text-[22px] font-semibold leading-tight tracking-tight md:text-[28px]">
+            {activePreset ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="inline-block size-2.5 shrink-0 rounded-full"
+                  style={{ background: activePreset.color }}
+                />
+                <span>{activePreset.name}</span>
+              </>
+            ) : (
+              "Tracker pulse"
+            )}
           </h1>
         </div>
         <AddTorrentDialog />
       </header>
+
+      {/* ── Preset chip strip ── */}
+      <div className="mb-4 md:mb-5">
+        <PresetChipStrip
+          totals={totals}
+          onCreate={() =>
+            navigate({ to: "/config", search: { new: "1" } as never })
+          }
+        />
+      </div>
 
       {/* ── Hero summary ── */}
       <section className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border md:grid-cols-4">
@@ -161,7 +221,11 @@ function TorrentsPage() {
           label="Active"
           value={stats.data ? `${stats.data.active_torrents}` : "—"}
           valueSuffix={
-            stats.data ? `/ ${stats.data.max_active_torrents}` : undefined
+            slotCap != null
+              ? `/ ${slotCap}`
+              : stats.data
+                ? `/ ${stats.data.max_active_torrents}`
+                : undefined
           }
           sub={pauseLabel ?? undefined}
         />
@@ -207,7 +271,14 @@ function TorrentsPage() {
             {/* Mobile cards */}
             <ul className="space-y-1.5 md:hidden">
               {torrents.map((t) => (
-                <TorrentCard key={t.id} t={t} now={now} onOpen={open} />
+                <TorrentCard
+                  key={t.id}
+                  t={t}
+                  now={now}
+                  onOpen={open}
+                  preset={presetById.get(t.preset_id) ?? null}
+                  showPresetPill={activeId === "all"}
+                />
               ))}
             </ul>
 
@@ -217,13 +288,14 @@ function TorrentsPage() {
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
                     <SortableTh
-                      className="w-[36%]"
+                      className="w-[34%]"
                       sortKey="name"
                       sort={sort}
                       onSort={onSort}
                     >
                       Name
                     </SortableTh>
+                    {activeId === "all" && <Th className="w-[14%]">Preset</Th>}
                     <SortableTh sortKey="state" sort={sort} onSort={onSort}>
                       Status
                     </SortableTh>
@@ -280,7 +352,14 @@ function TorrentsPage() {
                 </thead>
                 <tbody>
                   {torrents.map((t) => (
-                    <TorrentRow key={t.id} t={t} now={now} onOpen={open} />
+                    <TorrentRow
+                      key={t.id}
+                      t={t}
+                      now={now}
+                      onOpen={open}
+                      preset={presetById.get(t.preset_id) ?? null}
+                      showPresetCol={activeId === "all"}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -295,11 +374,6 @@ function TorrentsPage() {
 }
 
 /* ───────────────────────── HERO STAT ───────────────────────── */
-
-function joinSub(parts: (string | null | undefined)[]): string | undefined {
-  const kept = parts.filter((p): p is string => !!p);
-  return kept.length === 0 ? undefined : kept.join(" · ");
-}
 
 function ratioColorClass(
   uploaded?: number | null,
@@ -447,10 +521,14 @@ function TorrentRow({
   t,
   now,
   onOpen,
+  preset,
+  showPresetCol,
 }: {
   t: Torrent;
   now: number;
   onOpen: (h: string | null | undefined) => void;
+  preset: Preset | null;
+  showPresetCol: boolean;
 }) {
   const isActive = t.state === "downloading" || t.state === "seeding";
   const nextCountdown = (() => {
@@ -465,11 +543,33 @@ function TorrentRow({
       onClick={() => onOpen(t.info_hash)}
     >
       <Td>
-        <div className="font-medium leading-tight">{t.name}</div>
+        <div className="flex items-center gap-2">
+          {!showPresetCol && preset && (
+            <span
+              aria-hidden="true"
+              className="size-1.5 shrink-0 rounded-full"
+              style={{ background: preset.color }}
+            />
+          )}
+          <span className="min-w-0 flex-1 truncate font-medium leading-tight">
+            {t.name}
+          </span>
+        </div>
         <div className="num mt-0.5 text-[11px] text-muted-foreground">
           {shortHash(t.info_hash)}
         </div>
       </Td>
+      {showPresetCol && (
+        <Td>
+          {preset ? (
+            <PresetPill color={preset.color} name={preset.name} />
+          ) : (
+            <span className="font-mono text-[11px] text-muted-foreground/50">
+              —
+            </span>
+          )}
+        </Td>
+      )}
       <Td>
         <TorrentStatusBadge t={t} />
       </Td>
@@ -525,10 +625,14 @@ function TorrentCard({
   t,
   now,
   onOpen,
+  preset,
+  showPresetPill,
 }: {
   t: Torrent;
   now: number;
   onOpen: (h: string | null | undefined) => void;
+  preset: Preset | null;
+  showPresetPill: boolean;
 }) {
   const isActive = t.state === "downloading" || t.state === "seeding";
   const nextCountdown = (() => {
@@ -571,10 +675,18 @@ function TorrentCard({
         {/* Line 2 — single horizontal metric strip with `·` separators. */}
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 num text-[11px] text-muted-foreground">
           <TorrentStatusBadge t={t} />
+          {showPresetPill && preset && (
+            <>
+              <Sep />
+              <PresetPill color={preset.color} name={preset.name} />
+            </>
+          )}
           <Sep />
           <span className="text-foreground/80">{fmtBytes(t.size)}</span>
           <Sep />
-          <span className={cn("font-medium", ratioColorClass(t.uploaded, t.size))}>
+          <span
+            className={cn("font-medium", ratioColorClass(t.uploaded, t.size))}
+          >
             {fmtRatio(t.uploaded, t.size)}×
           </span>
           <Sep />

@@ -36,7 +36,7 @@ import {
   fmtRelativeTime,
   fmtSpeed,
 } from "@/lib/format";
-import { useConfig, useTorrent, useTorrentAnnounces } from "@/lib/queries";
+import { usePresets, useTorrent, useTorrentAnnounces } from "@/lib/queries";
 import type { AnnouncesPage, AnnounceTrace, Torrent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -149,7 +149,8 @@ export function TorrentDetailSheet({ infoHash, onClose }: Props) {
 
 function MetricsGrid({ t }: { t: Torrent }) {
   const now = useNow();
-  const cfg = useConfig();
+  const presets = usePresets();
+  const presetPolicy = presets.data?.find((p) => p.id === t?.preset_id)?.policy;
   const isActive = t.state === "downloading" || t.state === "seeding";
   const nextAnnounce = (() => {
     if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
@@ -180,7 +181,7 @@ function MetricsGrid({ t }: { t: Torrent }) {
       return fmtDurationShort(left / dnBps);
     }
     if (t.state !== "seeding") return "—";
-    const target = cfg.data?.upload_ratio_target ?? -1;
+    const target = presetPolicy?.upload_ratio_target ?? -1;
     if (target <= 0) return "—";
     const size = t.size ?? 0;
     const uploaded = t.uploaded ?? 0;

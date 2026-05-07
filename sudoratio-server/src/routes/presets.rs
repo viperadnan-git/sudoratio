@@ -3,18 +3,37 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
-use sudoratio_core::{ApiErrorBody, PresetPolicy, PresetPolicyUpdate, PresetSnapshot};
+use serde::{Deserialize, Serialize};
+use sudoratio_core::{
+    ApiErrorBody, PresetPolicy, PresetPolicyUpdate, PresetRollup, PresetSnapshot,
+};
 
 use crate::error::ApiErrorResponse;
 use crate::state::AppState;
 
-pub async fn list(State(s): State<Arc<AppState>>) -> Json<Vec<PresetSnapshot>> {
+#[derive(Serialize)]
+pub struct PresetWithRollup {
+    #[serde(flatten)]
+    pub preset: PresetSnapshot,
+    pub rollup: PresetRollup,
+}
+
+/// Compile-time default policy. Used by the UI Reset button on the default preset.
+pub async fn defaults() -> Json<PresetPolicy> {
+    Json(PresetPolicy::default())
+}
+
+pub async fn list(State(s): State<Arc<AppState>>) -> Json<Vec<PresetWithRollup>> {
+    // Single O(N) walk of the torrent map — reused for every preset row.
+    let mut rollups = s.core.preset_rollups();
     Json(
         s.core
             .list_presets()
             .iter()
-            .map(|p| p.snapshot())
+            .map(|p| PresetWithRollup {
+                preset: p.snapshot(),
+                rollup: rollups.remove(&p.id).unwrap_or_default(),
+            })
             .collect(),
     )
 }
@@ -22,11 +41,17 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Json<Vec<PresetSnapshot>> {
 pub async fn get(
     State(s): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<PresetSnapshot>, ApiErrorResponse> {
-    s.core
-        .get_preset(&id)
-        .map(|p| Json(p.snapshot()))
-        .ok_or_else(|| not_found(&id))
+) -> Result<Json<PresetWithRollup>, ApiErrorResponse> {
+    let preset = s.core.get_preset(&id).ok_or_else(|| not_found(&id))?;
+    let rollup = s
+        .core
+        .preset_rollups()
+        .remove(&id)
+        .unwrap_or_default();
+    Ok(Json(PresetWithRollup {
+        preset: preset.snapshot(),
+        rollup,
+    }))
 }
 
 #[derive(Deserialize)]

@@ -22,8 +22,8 @@ fn resolve(s: &AppState, info_hash: &str) -> Result<TorrentId, ApiErrorResponse>
 
 #[derive(Deserialize)]
 pub struct ListQuery {
-    pub page: Option<usize>,
-    pub per_page: Option<usize>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
     pub preset_id: Option<String>,
 }
 
@@ -31,26 +31,25 @@ pub struct ListQuery {
 pub struct TorrentsPage {
     pub items: Vec<sudoratio_core::Torrent>,
     pub total: usize,
-    pub page: usize,
-    pub per_page: usize,
+    pub offset: usize,
+    pub limit: usize,
 }
 
 pub async fn list(
     State(s): State<Arc<AppState>>,
     Query(q): Query<ListQuery>,
 ) -> Json<TorrentsPage> {
-    let page = q.page.unwrap_or(1).max(1);
-    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
-    let offset = (page - 1) * per_page;
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let (items, total) = s
         .core
-        .list_torrents_paginated(q.preset_id.as_deref(), offset, per_page)
+        .list_torrents_paginated(q.preset_id.as_deref(), offset, limit)
         .await;
     Json(TorrentsPage {
         items,
         total,
-        page,
-        per_page,
+        offset,
+        limit,
     })
 }
 

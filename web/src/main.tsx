@@ -10,6 +10,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { PresetSelectionProvider } from "@/lib/preset-context";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 
@@ -36,8 +37,10 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <RouterProvider router={router} />
-        <Toaster />
+        <PresetSelectionProvider>
+          <RouterProvider router={router} />
+          <Toaster />
+        </PresetSelectionProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,

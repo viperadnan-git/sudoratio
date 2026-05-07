@@ -15,7 +15,9 @@ use crate::bandwidth::BandwidthDispatcher;
 use crate::config::EngineConfig;
 use crate::error::SudoratioError;
 use crate::persistence::Persistence;
-use crate::preset::{Preset, PresetError, PresetPolicy, PresetPolicyUpdate, PresetRegistry};
+use crate::preset::{
+    Preset, PresetError, PresetPolicy, PresetPolicyUpdate, PresetRegistry, PresetRollup,
+};
 use crate::profile;
 use crate::scheduler;
 use crate::state::{ClientProfileRecord, Engine, SeedingState};
@@ -261,6 +263,10 @@ impl Engine {
                 || p.min_download_speed != new_policy.min_download_speed
                 || p.max_download_speed != new_policy.max_download_speed
         });
+        let profile_changed = prev_policy
+            .as_ref()
+            .map(|p| p.client_profile_id != new_policy.client_profile_id)
+            .unwrap_or(false);
         if bounds_changed {
             let ids: Vec<TorrentId> = self
                 .torrents
@@ -271,6 +277,9 @@ impl Engine {
             for tid in ids {
                 self.bandwidth.sync_torrent_to_policy(tid, &self.torrents);
             }
+        }
+        if profile_changed {
+            self.forget_preset_identities(id);
         }
         self.orchestrator_notify.notify_one();
         scheduler::try_fill_slots(self).await;
@@ -352,8 +361,19 @@ impl Engine {
         Ok(ids)
     }
 
-    /// Remove a user client doc AND delete the on-disk file.
+    /// Remove a user client doc AND delete the on-disk file. Cascade-resets every preset
+    /// whose `client_profile_id` pointed to a variant of this client family back to
+    /// `None` (engine default) — Option A.
     pub async fn remove_user_client_doc(&self, client: &str) -> anyhow::Result<usize> {
+        // Snapshot variant ids being removed BEFORE removing them, so we can find
+        // presets pointing to any of them.
+        let removed_variant_ids: std::collections::HashSet<String> = self
+            .profiles
+            .iter()
+            .filter(|r| r.value().client.as_ref() == client && !r.value().bundled)
+            .map(|r| r.key().0.clone())
+            .collect();
+
         let removed = self
             .remove_client(client)
             .await
@@ -363,7 +383,47 @@ impl Engine {
                 tracing::warn!(error = %e, "client file delete failed");
             }
         }
+
+        if !removed_variant_ids.is_empty() {
+            self.cascade_reset_preset_profiles(&removed_variant_ids).await;
+        }
         Ok(removed)
+    }
+
+    /// Reset every preset whose `client_profile_id` is in `dead_ids` back to `None`.
+    /// Persists each touched preset and invalidates the matching torrents' identity caches.
+    async fn cascade_reset_preset_profiles(
+        &self,
+        dead_ids: &std::collections::HashSet<String>,
+    ) {
+        let affected: Vec<String> = self
+            .presets
+            .list()
+            .into_iter()
+            .filter(|p| {
+                p.policy
+                    .load()
+                    .client_profile_id
+                    .as_deref()
+                    .is_some_and(|id| dead_ids.contains(id))
+            })
+            .map(|p| p.id.clone())
+            .collect();
+        for preset_id in affected {
+            let _ = self
+                .presets
+                .apply_policy(
+                    &preset_id,
+                    PresetPolicyUpdate {
+                        client_profile_id: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .map(|preset| {
+                    self.persist_preset(&preset);
+                    self.forget_preset_identities(&preset_id);
+                });
+        }
     }
 
     /// Read announce trace history (newest-first) for a torrent.
@@ -554,6 +614,37 @@ impl Engine {
         self.active_profile.read().await.clone()
     }
 
+    /// Centralized: resolve the profile a torrent should use.
+    /// Order: torrent's preset.client_profile_id → engine default.
+    pub(crate) async fn resolve_profile_for_torrent(
+        &self,
+        tid: TorrentId,
+    ) -> Option<ClientProfileId> {
+        let preset_pid = self
+            .torrents
+            .get(&tid)
+            .and_then(|e| e.policy_snapshot().client_profile_id.clone())
+            .map(ClientProfileId);
+        if preset_pid.is_some() {
+            return preset_pid;
+        }
+        self.active_profile.read().await.clone()
+    }
+
+    /// Drop cached `peer_id` / `key` material for every torrent currently in `preset_id`.
+    /// Called after a preset's `client_profile_id` changes so the next announce regenerates
+    /// identity using the new profile's algorithm + refresh policy.
+    pub(crate) fn forget_preset_identities(&self, preset_id: &str) {
+        for r in self.torrents.iter() {
+            if r.value().preset_id() != preset_id {
+                continue;
+            }
+            if let Some(ih) = r.value().info_hash_bytes {
+                self.identities.forget_info_hash(&ih);
+            }
+        }
+    }
+
     pub async fn list_profiles(&self) -> Vec<ClientProfileSummary> {
         let active = self.active_profile.read().await.clone();
         self.profiles
@@ -726,9 +817,11 @@ impl Engine {
     }
 
     /// peer_id for an inbound BT handshake — same per-info-hash slot as outbound announces.
+    /// Resolves via the preset of the matching torrent if any, falling back to engine default.
     pub(crate) async fn resolve_inbound_peer_id(&self, info_hash: &[u8; 20]) -> Option<String> {
-        let active = self.active_profile.read().await.clone()?;
-        let record = self.profiles.get(&active)?;
+        let tid = TorrentId(*info_hash);
+        let pid = self.resolve_profile_for_torrent(tid).await?;
+        let record = self.profiles.get(&pid)?;
         let spec = record.spec.clone();
         drop(record);
         self.resolve_announce_peer_id(&spec, info_hash, AnnounceEvent::None)
@@ -777,6 +870,81 @@ impl Engine {
             });
         }
         while set.join_next().await.is_some() {}
+    }
+
+    /// Lightweight per-preset rollup. Walks the torrent map ONCE and groups by preset id —
+    /// O(N) where N is total torrents. Returned map covers every preset (zero counts when
+    /// no torrents are assigned). Reuse the same call for both `/presets` listing and
+    /// chip-strip totals — no duplicate scans.
+    pub fn preset_rollups(&self) -> std::collections::HashMap<String, PresetRollup> {
+        let mut out: std::collections::HashMap<String, PresetRollup> = self
+            .presets
+            .list()
+            .iter()
+            .map(|p| (p.id.clone(), PresetRollup::default()))
+            .collect();
+        for r in self.torrents.iter() {
+            let pid = r.value().preset_id();
+            let entry = out.entry(pid).or_default();
+            entry.torrent_count += 1;
+            match r.value().lifecycle() {
+                TorrentState::Downloading | TorrentState::Seeding => {
+                    entry.active_count += 1;
+                    let id = *r.key();
+                    entry.upload_speed_bps =
+                        entry.upload_speed_bps.saturating_add(self.bandwidth.upload_speed_for(id));
+                    entry.download_speed_bps = entry
+                        .download_speed_bps
+                        .saturating_add(self.bandwidth.download_speed_for(id));
+                }
+                TorrentState::Queued => {
+                    entry.queued_count += 1;
+                }
+                TorrentState::Stopped(_) => {}
+            }
+        }
+        out
+    }
+
+    /// Scoped stats: when `preset_id = Some(id)`, only torrents in that preset are counted
+    /// and only their speeds summed. `max_active_torrents` becomes the preset's slot cap.
+    pub async fn stats_for_preset(&self, preset_id: Option<&str>) -> SeedingStatus {
+        let Some(filter) = preset_id else {
+            return self.stats().await;
+        };
+        let mut active = 0usize;
+        let mut waiting = 0usize;
+        let mut metainfo_count = 0usize;
+        let mut up = 0u64;
+        let mut down = 0u64;
+        for r in self.torrents.iter() {
+            if r.value().preset_id() != filter {
+                continue;
+            }
+            metainfo_count += 1;
+            match r.lifecycle() {
+                TorrentState::Downloading | TorrentState::Seeding => active += 1,
+                TorrentState::Queued => waiting += 1,
+                TorrentState::Stopped(_) => {}
+            }
+            let id = *r.key();
+            up = up.saturating_add(self.bandwidth.upload_speed_for(id));
+            down = down.saturating_add(self.bandwidth.download_speed_for(id));
+        }
+        let cap = self
+            .presets
+            .get(filter)
+            .map(|p| p.policy.load().max_active_torrents.max(1))
+            .unwrap_or(1);
+        SeedingStatus {
+            running: !self.shutting_down.load(Ordering::SeqCst),
+            upload_speed: up,
+            download_speed: down,
+            max_active_torrents: cap,
+            active_torrents: active,
+            waiting_torrents: waiting,
+            tracked_metainfo_torrents: metainfo_count,
+        }
     }
 
     pub async fn stats(&self) -> SeedingStatus {

@@ -158,10 +158,8 @@ impl Engine {
         let _inflight = AnnounceInflight(&self.announce_inflight);
 
         let pid = self
-            .active_profile
-            .read()
+            .resolve_profile_for_torrent(torrent_id)
             .await
-            .clone()
             .ok_or(SudoratioError::NoActiveClientProfile)?;
         let spec = self
             .profiles

@@ -31,8 +31,8 @@ pub use config_io::{ConfigResponse, ConfigUpdate};
 pub use error::{ApiErrorBody, SudoratioError};
 pub use metainfo::parse as parse_metainfo;
 pub use preset::{
-    Preset, PresetError, PresetPolicy, PresetPolicyUpdate, PresetRegistry, PresetSnapshot,
-    DEFAULT_PRESET_ID,
+    Preset, PresetError, PresetPolicy, PresetPolicyUpdate, PresetRegistry, PresetRollup,
+    PresetSnapshot, DEFAULT_PRESET_ID,
 };
 pub use profile::{parse_client_doc, ClientDoc};
 pub use state::Engine;

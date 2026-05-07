@@ -1,6 +1,7 @@
-import { Check, FileUp, Plus, X } from "lucide-react";
+import { Check, ChevronDown, FileUp, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { PresetPickerSheet } from "@/components/preset-picker-sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -15,7 +16,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
-import { useAddTorrent } from "@/lib/queries";
+import { usePresetSelection } from "@/lib/preset-context";
+import { useAddTorrent, usePresets } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 type ItemStatus = "pending" | "uploading" | "ok" | "duplicate" | "error";
@@ -49,11 +51,20 @@ export function AddTorrentDialog() {
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const add = useAddTorrent();
+  const { activeId } = usePresetSelection();
+  const { data: presets } = usePresets();
+  const initialPresetId = activeId !== "all" ? activeId : "default";
+  const [presetId, setPresetId] = useState<string>(initialPresetId);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickedPreset =
+    (presets ?? []).find((p) => p.id === presetId) ??
+    (presets ?? []).find((p) => p.is_default);
 
   const reset = () => {
     setItems([]);
     setDownloadBeforeSeed(false);
     setBusy(false);
+    setPresetId(activeId !== "all" ? activeId : "default");
   };
 
   const appendFiles = (incoming: FileList | File[]) => {
@@ -92,7 +103,11 @@ export function AddTorrentDialog() {
     for (const item of queued) {
       setItemStatus(item.id, "uploading");
       try {
-        await add.mutateAsync({ file: item.file, downloadBeforeSeed });
+        await add.mutateAsync({
+          file: item.file,
+          downloadBeforeSeed,
+          presetId,
+        });
         setItemStatus(item.id, "ok");
         added += 1;
       } catch (e) {
@@ -237,6 +252,47 @@ export function AddTorrentDialog() {
             ))}
           </ol>
         )}
+
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          disabled={busy}
+          className={cn(
+            "flex w-full cursor-pointer items-center justify-between gap-3 rounded-md border bg-card px-3 py-2.5 text-left transition-colors hover:bg-foreground/[0.03]",
+          )}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className="size-2.5 shrink-0 rounded-full ring-1 ring-foreground/10"
+              style={{ background: pickedPreset?.color ?? "#64748b" }}
+            />
+            <div className="min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                Preset
+              </div>
+              <div className="text-[13px] font-medium leading-tight">
+                {pickedPreset?.name ?? "Default"}
+              </div>
+            </div>
+          </div>
+          <ChevronDown
+            className="size-3.5 shrink-0 text-muted-foreground"
+            strokeWidth={2}
+          />
+        </button>
+
+        <PresetPickerSheet
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          selectedId={presetId}
+          onSelect={(id) => {
+            setPresetId(id);
+            setPickerOpen(false);
+          }}
+          title="Choose preset"
+          description="Applies to every file in this batch."
+        />
 
         <div className="flex min-w-0 items-center gap-2.5">
           <Checkbox

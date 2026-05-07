@@ -1,5 +1,4 @@
-// TanStack Query hooks for every /api/v1/* route. Live polls are 2s for high-frequency lists,
-// and config/profiles are fetched on-demand (invalidated after mutations).
+// TanStack Query hooks for every /api/v1/* route.
 
 import {
   type QueryClient,
@@ -15,8 +14,12 @@ import type {
   ConfigUpdate,
   ConnectivityResponse,
   HealthStatus,
+  Preset,
+  PresetCreateBody,
+  PresetUpdateBody,
   SeedingStatus,
   Torrent,
+  TorrentsPage,
 } from "@/lib/types";
 
 export const qk = {
@@ -25,14 +28,20 @@ export const qk = {
   configDefaults: ["config", "defaults"] as const,
   profiles: ["profiles"] as const,
   stats: ["stats"] as const,
-  torrents: (withAnnounces = false) => ["torrents", { withAnnounces }] as const,
+  torrents: (presetId?: string | null, offset = 0, limit = 50) =>
+    ["torrents", { presetId: presetId ?? null, offset, limit }] as const,
   torrent: (infoHash: string) => ["torrents", infoHash] as const,
   announces: (infoHash: string, limit: number, offset: number) =>
     ["torrents", infoHash, "announces", limit, offset] as const,
+  presets: ["presets"] as const,
 };
 
 export function invalidateTorrents(qc: QueryClient) {
   return qc.invalidateQueries({ queryKey: ["torrents"] });
+}
+
+export function invalidatePresets(qc: QueryClient) {
+  return qc.invalidateQueries({ queryKey: qk.presets });
 }
 
 export function useHealth() {
@@ -58,6 +67,15 @@ export function fetchConfigDefaults(qc: QueryClient) {
   });
 }
 
+export function fetchPresetDefaults(qc: QueryClient) {
+  return qc.fetchQuery({
+    queryKey: ["presets", "defaults"] as const,
+    queryFn: () =>
+      api<import("@/lib/types").PresetPolicy>("/api/v1/presets/defaults"),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 export function useCheckConnectivity() {
   return useMutation({
     mutationFn: (port?: number) =>
@@ -77,22 +95,46 @@ export function useUpdateConfig() {
   });
 }
 
-export function useStats() {
+export function useStats(presetId?: string | null) {
+  const filterId = presetId && presetId !== "all" ? presetId : null;
   return useQuery({
-    queryKey: qk.stats,
-    queryFn: () => api<SeedingStatus>("/api/v1/stats"),
+    queryKey: filterId
+      ? (["stats", { presetId: filterId }] as const)
+      : qk.stats,
+    queryFn: () => {
+      const path = filterId
+        ? `/api/v1/stats?preset_id=${encodeURIComponent(filterId)}`
+        : "/api/v1/stats";
+      return api<SeedingStatus>(path);
+    },
     refetchInterval: 2_000,
+    placeholderData: (prev) => prev,
   });
 }
 
-export function useTorrents(withAnnounces = false) {
+export interface UseTorrentsOptions {
+  presetId?: string | null;
+  offset?: number;
+  limit?: number;
+}
+
+export function useTorrents({
+  presetId,
+  offset = 0,
+  limit = 50,
+}: UseTorrentsOptions = {}) {
+  const filterId = presetId && presetId !== "all" ? presetId : null;
   return useQuery({
-    queryKey: qk.torrents(withAnnounces),
-    queryFn: () =>
-      api<Torrent[]>(
-        withAnnounces ? "/api/v1/torrents?with=announces" : "/api/v1/torrents",
-      ),
+    queryKey: qk.torrents(filterId, offset, limit),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("offset", String(offset));
+      params.set("limit", String(limit));
+      if (filterId) params.set("preset_id", filterId);
+      return api<TorrentsPage>(`/api/v1/torrents?${params.toString()}`);
+    },
     refetchInterval: 2_000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -124,8 +166,6 @@ export function useTorrentAnnounces(
     },
     enabled: !!infoHash,
     placeholderData: (prev) => prev,
-    // Refetch only while the sheet is mounted (the hook is only used there).
-    // Pause when the tab isn't focused to avoid background traffic.
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   });
@@ -137,9 +177,11 @@ export function useAddTorrent() {
     mutationFn: ({
       file,
       downloadBeforeSeed,
+      presetId,
     }: {
       file: File | Blob;
       downloadBeforeSeed: boolean;
+      presetId?: string;
     }) => {
       const form = new FormData();
       form.append(
@@ -151,6 +193,7 @@ export function useAddTorrent() {
         "download_before_seed",
         downloadBeforeSeed ? "true" : "false",
       );
+      if (presetId) form.append("preset_id", presetId);
       return api<{ info_hash: string }>("/api/v1/torrents", {
         method: "POST",
         body: form,
@@ -206,6 +249,76 @@ export function useAnnounceTorrent() {
   });
 }
 
+export function useAssignTorrentPreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      infoHash,
+      presetId,
+    }: {
+      infoHash: string;
+      presetId: string;
+    }) =>
+      api(`/api/v1/torrents/${infoHash}/preset`, {
+        method: "POST",
+        body: { preset_id: presetId },
+      }),
+    onSuccess: () => invalidateTorrents(qc),
+  });
+}
+
+export function usePresets() {
+  return useQuery({
+    queryKey: qk.presets,
+    queryFn: () => api<Preset[]>("/api/v1/presets"),
+    refetchInterval: 5_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCreatePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PresetCreateBody) =>
+      api<Preset>("/api/v1/presets", { method: "POST", body }),
+    onSuccess: () => invalidatePresets(qc),
+  });
+}
+
+export function useUpdatePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: PresetUpdateBody }) =>
+      api<Preset>(`/api/v1/presets/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: patch,
+      }),
+    onSuccess: () => {
+      invalidatePresets(qc);
+      invalidateTorrents(qc);
+    },
+  });
+}
+
+export function useDeletePreset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reassignTo }: { id: string; reassignTo?: string }) => {
+      const params = new URLSearchParams();
+      if (reassignTo) params.set("reassign_to", reassignTo);
+      const qs = params.toString();
+      return api(
+        `/api/v1/presets/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`,
+        { method: "DELETE" },
+      );
+    },
+    onSuccess: () => {
+      invalidatePresets(qc);
+      invalidateTorrents(qc);
+    },
+  });
+}
+
 export function useProfiles() {
   return useQuery({
     queryKey: qk.profiles,
@@ -247,7 +360,6 @@ export interface ClientSource {
   toml: string;
 }
 
-/** Doc TOML for a client family (shared by every variant). */
 export function useClientSource(client: string | null) {
   return useQuery({
     queryKey: client

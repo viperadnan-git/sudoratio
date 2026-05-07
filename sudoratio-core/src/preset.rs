@@ -22,6 +22,9 @@ pub struct PresetPolicy {
     pub pause_torrent_with_zero_leechers_grace: u64,
     pub min_swarm_seeders_to_seed: u32,
     pub max_announce_jitter: u32,
+    /// Client profile variant id (`client@version`). `None` = inherit engine default.
+    #[serde(default)]
+    pub client_profile_id: Option<String>,
 }
 
 impl Default for PresetPolicy {
@@ -37,6 +40,7 @@ impl Default for PresetPolicy {
             pause_torrent_with_zero_leechers_grace: 3 * 60 * 60,
             min_swarm_seeders_to_seed: 0,
             max_announce_jitter: 8,
+            client_profile_id: None,
         }
     }
 }
@@ -55,6 +59,9 @@ pub struct PresetPolicyUpdate {
     pub pause_torrent_with_zero_leechers_grace: Option<u64>,
     pub min_swarm_seeders_to_seed: Option<u32>,
     pub max_announce_jitter: Option<u32>,
+    /// Outer Option = "field present in patch"; inner = `None` (clear) vs `Some(id)` (set).
+    #[serde(default)]
+    pub client_profile_id: Option<Option<String>>,
 }
 
 impl PresetPolicyUpdate {
@@ -89,6 +96,9 @@ impl PresetPolicyUpdate {
         if let Some(v) = self.max_announce_jitter {
             p.max_announce_jitter = v;
         }
+        if let Some(v) = self.client_profile_id {
+            p.client_profile_id = v;
+        }
         if p.max_upload_speed < p.min_upload_speed {
             std::mem::swap(&mut p.min_upload_speed, &mut p.max_upload_speed);
         }
@@ -121,6 +131,16 @@ impl Preset {
             updated_at_ms: *self.updated_at_ms.read(),
         }
     }
+}
+
+/// Per-preset rollup (counts + summed live speeds). Recomputed on read.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PresetRollup {
+    pub torrent_count: usize,
+    pub active_count: usize,
+    pub queued_count: usize,
+    pub upload_speed_bps: u64,
+    pub download_speed_bps: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

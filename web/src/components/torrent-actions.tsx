@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   MoreHorizontal,
+  MoveRight,
   Pause,
   Play,
   Radio,
@@ -9,6 +10,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { PresetPickerSheet } from "@/components/preset-picker-sheet";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   useAnnounceTorrent,
+  useAssignTorrentPreset,
   useDeleteTorrent,
   usePauseTorrent,
   useResumeTorrent,
@@ -40,7 +43,9 @@ export function TorrentActions({ t }: { t: Torrent }) {
   const resume = useResumeTorrent();
   const del = useDeleteTorrent();
   const announce = useAnnounceTorrent();
+  const assign = useAssignTorrentPreset();
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   if (!t.info_hash) return null;
   const ih = t.info_hash;
@@ -112,6 +117,10 @@ export function TorrentActions({ t }: { t: Torrent }) {
             <Radio className="size-3.5" strokeWidth={1.75} />
             Announce now
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setPickerOpen(true)}>
+            <MoveRight className="size-3.5" strokeWidth={1.75} />
+            Move to preset…
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
@@ -122,6 +131,27 @@ export function TorrentActions({ t }: { t: Torrent }) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <PresetPickerSheet
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        selectedId={t.preset_id}
+        onSelect={async (presetId) => {
+          if (presetId === t.preset_id) {
+            setPickerOpen(false);
+            return;
+          }
+          try {
+            await assign.mutateAsync({ infoHash: ih, presetId });
+            toast.success(`Moved to ${presetId}`);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "move failed");
+          }
+          setPickerOpen(false);
+        }}
+        title={`Move "${t.name}"`}
+        description={`Currently in #${t.preset_id}`}
+      />
 
       <ConfirmDialog
         kind="announce"
