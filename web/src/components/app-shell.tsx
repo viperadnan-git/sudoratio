@@ -111,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* ── SIDEBAR FOOTER ── */}
         {/* lg ≥1024: rich session card. md 768–1023: just the SessionMenu trigger. */}
-        <div className="border-t">
+        <div className="border-t pb-[env(safe-area-inset-bottom)]">
           <SidebarSessionLg className="hidden lg:block" />
           <div className="flex justify-center p-2 lg:hidden">
             <SessionMenu side="right" align="end" />
@@ -122,7 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* ═════════════ MAIN COLUMN ═════════════ */}
       <div className="md:ml-[60px] lg:ml-[200px]">
         {/* Telemetry strip — visible everywhere; sticks to top */}
-        <header className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        <header className="sticky top-0 z-20 border-b bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur supports-[backdrop-filter]:bg-background/70">
           <div className="flex h-12 items-center gap-2 px-3 md:gap-3 md:px-6">
             {/* mobile brand */}
             <Link
@@ -192,11 +192,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="pb-20 md:pb-12">{children}</main>
+        <main className="pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-12">
+          {children}
+        </main>
       </div>
 
       {/* ═════════════ MOBILE BOTTOM NAV ═════════════ */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden">
         {NAV.map(({ to, label, Icon }) => {
           const active =
             to === "/"
