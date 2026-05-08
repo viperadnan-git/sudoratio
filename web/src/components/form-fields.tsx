@@ -4,11 +4,6 @@
 // shadcn `<Field>` markup. Used as `<form.AppField name="…"><Atom ... /></form.AppField>`,
 // or composed inside `withFieldGroup`/`withForm` render props.
 
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
@@ -18,6 +13,11 @@ import {
 } from "@/components/ui/field";
 import { InlineEdit } from "@/components/ui/inline-edit";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useFieldContext } from "@/lib/form-contexts";
 import { isHexColor, PRESET_SWATCHES } from "@/lib/preset-colors";
 import { useProfiles } from "@/lib/queries";
@@ -25,7 +25,9 @@ import { cn } from "@/lib/utils";
 
 /* ───────────────────────────── Helpers ───────────────────────────── */
 
-function useInvalid(field: { state: { meta: { isTouched: boolean; isValid: boolean } } }) {
+function useInvalid(field: {
+  state: { meta: { isTouched: boolean; isValid: boolean } };
+}) {
   return field.state.meta.isTouched && !field.state.meta.isValid;
 }
 
@@ -71,10 +73,7 @@ export function NumberRow({
           </FieldDescription>
         )}
         {isInvalid && (
-          <FieldError
-            errors={field.state.meta.errors}
-            className="mt-0.5"
-          />
+          <FieldError errors={field.state.meta.errors} className="mt-0.5" />
         )}
       </div>
       <Input
@@ -133,10 +132,7 @@ export function NullableNumberRow({
           </FieldDescription>
         )}
         {isInvalid && (
-          <FieldError
-            errors={field.state.meta.errors}
-            className="mt-0.5"
-          />
+          <FieldError errors={field.state.meta.errors} className="mt-0.5" />
         )}
       </div>
       <Input
@@ -209,13 +205,7 @@ export function NumberInput({
 
 /* ───────────────────────────── Boolean ───────────────────────────── */
 
-export function CheckboxRow({
-  label,
-  hint,
-}: {
-  label: string;
-  hint?: string;
-}) {
+export function CheckboxRow({ label, hint }: { label: string; hint?: string }) {
   const field = useFieldContext<boolean>();
   return (
     <Field
@@ -356,9 +346,7 @@ function NativeColorTile({
   onChange: (hex: string) => void;
 }) {
   const seed = isHexColor(value) ? value : "#ffffff";
-  const inPalette = PRESET_SWATCHES.some(
-    (s) => s.hex === value.toLowerCase(),
-  );
+  const inPalette = PRESET_SWATCHES.some((s) => s.hex === value.toLowerCase());
   const showPreviewFill = !inPalette && isHexColor(value);
   return (
     <label

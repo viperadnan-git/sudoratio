@@ -319,7 +319,10 @@ function TrackersList({ tiers }: { tiers: string[][] | undefined }) {
         </p>
       ) : (
         groups.map((tier, ti) => (
-          <ul key={`tier-${ti}`} className="divide-y border-y">
+          <ul
+            key={tier.join("|") || `tier-${ti}`}
+            className="divide-y border-y"
+          >
             {groups.length > 1 && (
               <li className="bg-muted/30 px-4 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                 tier {(ti + 1).toString().padStart(2, "0")}
@@ -477,6 +480,7 @@ function AnnounceLine({ a, prev }: { a: AnnounceTrace; prev?: AnnounceTrace }) {
               ? "bg-success/15 text-success"
               : "bg-destructive/15 text-destructive",
           )}
+          role="img"
           title={a.success ? "ok" : "failed"}
           aria-label={a.success ? "ok" : "failed"}
         >

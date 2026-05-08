@@ -70,7 +70,13 @@ pub struct ConfigUpdate {
 
 impl ConfigUpdate {
     pub fn apply(self, cfg: &mut EngineConfig) {
-        macro_rules! set { ($f:ident, $dst:expr) => { if let Some(v) = self.$f { $dst = v; } } }
+        macro_rules! set {
+            ($f:ident, $dst:expr) => {
+                if let Some(v) = self.$f {
+                    $dst = v;
+                }
+            };
+        }
         set!(announce_port, cfg.announce_port);
         set!(max_concurrent_announces, cfg.max_concurrent_announces);
         set!(

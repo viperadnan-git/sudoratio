@@ -112,9 +112,9 @@ export interface SeedingStatus {
 export type {
   ConfigBody,
   ConfigUpdate,
+  PresetCreateBody,
   PresetPolicy,
   PresetPolicyUpdate,
-  PresetCreateBody,
   PresetUpdateBody,
 } from "@/lib/schemas";
 

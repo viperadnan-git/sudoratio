@@ -171,13 +171,16 @@ pub(crate) async fn stop_torrent(inner: &Engine, tid: TorrentId, mode: StopMode)
     }
     inner.bandwidth.unregister_torrent(tid, &inner.torrents);
     if mode == StopMode::Announce {
-        let _ = inner
+        if let Err(e) = inner
             .exec_tracker_announce(
                 tid,
                 AnnounceEvent::Stopped,
                 &AnnounceQueryOverrides::default(),
             )
-            .await;
+            .await
+        {
+            tracing::warn!(torrent_id = %tid, error = %e, "stopped announce failed");
+        }
     }
 }
 
@@ -224,7 +227,7 @@ pub(crate) async fn move_torrent_to_preset(
     let new_preset = inner
         .presets
         .get(new_preset_id)
-        .ok_or(SudoratioError::TorrentNotFound)?;
+        .ok_or(SudoratioError::PresetNotFound)?;
     let prev_preset_id = preset_id_of(inner, tid).ok_or(SudoratioError::TorrentNotFound)?;
     if prev_preset_id == new_preset_id {
         return Ok(());
@@ -234,11 +237,8 @@ pub(crate) async fn move_torrent_to_preset(
         None => return Err(SudoratioError::TorrentNotFound),
     };
 
-    // Reject cross-client moves: the torrent's tracker identity (peer_id /
-    // key / user-agent) is fixed for its lifetime in this engine — switching
-    // it mid-session would either lose accumulated counters or look like a
-    // fresh peer announcing non-zero bytes (anti-cheat fingerprint). Force
-    // the user to delete and re-add under the new preset instead.
+    // Cross-client moves are rejected: a fresh peer_id mid-session would
+    // announce non-zero counters, producing an anti-cheat fingerprint.
     let active_default = inner
         .active_profile
         .read()
@@ -275,9 +275,7 @@ pub(crate) async fn move_torrent_to_preset(
     } else {
         return Err(SudoratioError::TorrentNotFound);
     }
-    inner
-        .bandwidth
-        .sync_torrent_to_policy(tid, &inner.torrents);
+    inner.bandwidth.sync_torrent_to_policy(tid, &inner.torrents);
 
     try_fill_slots(inner).await;
     Ok(())

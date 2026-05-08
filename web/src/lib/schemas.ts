@@ -12,7 +12,10 @@ export const presetPolicySchema = z.object({
   max_active_torrents: z.number().int("must be whole").min(1, "min 1"),
   upload_ratio_target: z.number(),
   pause_torrent_with_zero_leechers: z.boolean(),
-  pause_torrent_with_zero_leechers_grace: z.number().int("must be whole").min(0),
+  pause_torrent_with_zero_leechers_grace: z
+    .number()
+    .int("must be whole")
+    .min(0),
   min_swarm_seeders_to_seed: z.number().int("must be whole").min(0),
   max_announce_jitter: z.number().int("must be whole").min(0),
   client_profile_id: z.string().nullable(),
@@ -38,11 +41,7 @@ export const DEFAULT_POLICY: PresetPolicy = {
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export const presetFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Name is required")
-    .max(64, "Name too long"),
+  name: z.string().trim().min(1, "Name is required").max(64, "Name too long"),
   color: z.string().regex(HEX_RE, "Use #rrggbb"),
   policy: presetPolicySchema,
 });
@@ -51,12 +50,7 @@ export type PresetForm = z.infer<typeof presetFormSchema>;
 /* ─────────────────────────── EngineConfig ────────────────────────── */
 
 export const configBodySchema = z.object({
-  announce_port: z
-    .number()
-    .int("must be whole")
-    .min(1)
-    .max(65535)
-    .nullable(),
+  announce_port: z.number().int("must be whole").min(1).max(65535).nullable(),
   bandwidth_tick_ms: z.number().int("must be whole").min(1),
   max_concurrent_announces: z.number().int("must be whole").min(0),
   http_tracker_connect_timeout_secs: z

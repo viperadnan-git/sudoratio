@@ -15,9 +15,9 @@
 			// THEME_INIT_SCRIPT in src/lib/theme.ts; default = dark.
 			(() => {
 				try {
-					var t = localStorage.getItem("sudoratio.theme");
+					const t = localStorage.getItem("sudoratio.theme");
 					document.documentElement.classList.toggle("dark", t !== "light");
-				} catch (_) {
+				} catch {
 					document.documentElement.classList.add("dark");
 				}
 			})();

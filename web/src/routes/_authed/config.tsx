@@ -20,11 +20,12 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import type { DiffListItem } from "@/components/diff-list";
-import { PresetDeleteDialog } from "@/components/preset-delete-dialog";
 import { NewChip, PresetChip } from "@/components/preset-chip";
+import { PresetDeleteDialog } from "@/components/preset-delete-dialog";
 import { PresetPolicyFields } from "@/components/preset-policy-fields";
 import { SaveConfirmDialog } from "@/components/save-confirm-dialog";
 import { Button } from "@/components/ui/button";
+import { useAppForm } from "@/lib/form-hook";
 import { PRESET_SWATCHES } from "@/lib/preset-colors";
 import {
   fetchConfigDefaults,
@@ -36,15 +37,14 @@ import {
   useUpdateConfig,
   useUpdatePreset,
 } from "@/lib/queries";
-import { useAppForm } from "@/lib/form-hook";
 import {
-  configBodySchema,
-  DEFAULT_POLICY,
-  presetFormSchema,
   type ConfigBody,
   type ConfigUpdate,
+  configBodySchema,
+  DEFAULT_POLICY,
   type PresetForm,
   type PresetPolicy,
+  presetFormSchema,
 } from "@/lib/schemas";
 import type { ConnectivityFamily, Preset } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -190,7 +190,10 @@ type EditorMode =
   | { kind: "edit"; id: string }
   | { kind: "draft"; cloneFrom?: string };
 
-function defaultsForMode(preset: Preset | null, clone: Preset | null): PresetForm {
+function defaultsForMode(
+  preset: Preset | null,
+  clone: Preset | null,
+): PresetForm {
   if (preset) {
     return { name: preset.name, color: preset.color, policy: preset.policy };
   }
@@ -283,7 +286,7 @@ function PresetEditor({
       form.reset(defaultsForMode(null, cloneSource));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset?.id, cloneSource?.id]);
+  }, [preset?.id, cloneSource?.id, mode.kind, form.reset, preset, cloneSource]);
 
   const onResetDefaults = async () => {
     setResetting(true);
@@ -325,9 +328,7 @@ function PresetEditor({
               <form.AppField name="name">
                 {(field) => (
                   <field.InlineEditField
-                    placeholder={
-                      isDraft ? "Preset name" : "click to rename"
-                    }
+                    placeholder={isDraft ? "Preset name" : "click to rename"}
                     disabled={busy}
                     startInEditMode={isDraft}
                     ariaLabel="Edit preset name"
@@ -467,7 +468,7 @@ function PresetEditor({
                     </div>
                   );
                 }
-                if (preset && preset.is_default) {
+                if (preset?.is_default) {
                   return (
                     <div
                       key="default-clean-actions"
@@ -565,19 +566,32 @@ function slugifyName(s: string): string {
 
 /* ───────────────────────── ENGINE PANEL ───────────────────────── */
 
+// Split into shell + form so `useAppForm` only mounts with a real
+// `defaultValues` — initialising it with an empty object would lock that
+// in as the dirty-baseline.
 function EnginePanel() {
   const cfg = useConfig();
+  if (!cfg.data) {
+    return (
+      <div className="px-3 py-6 font-mono text-[12px] text-muted-foreground">
+        {cfg.isLoading ? "› loading config…" : "› no config available"}
+      </div>
+    );
+  }
+  return <EnginePanelForm initial={cfg.data} />;
+}
+
+function EnginePanelForm({ initial }: { initial: ConfigBody }) {
   const update = useUpdateConfig();
   const qc = useQueryClient();
   const [resetting, setResetting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const form = useAppForm({
-    defaultValues: cfg.data ?? ({} as ConfigBody),
+    defaultValues: initial,
     validators: { onChange: configBodySchema },
     onSubmit: async ({ value }) => {
-      if (!cfg.data) return;
-      const patch = diffConfig(cfg.data, value);
+      const patch = diffConfig(initial, value);
       if (Object.keys(patch).length === 0) {
         toast.message("Nothing changed");
         setConfirmOpen(false);
@@ -594,12 +608,6 @@ function EnginePanel() {
     },
   });
 
-  // Re-seed when the live config arrives (the form was constructed before fetch).
-  useEffect(() => {
-    if (cfg.data) form.reset(cfg.data);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg.data]);
-
   const onReset = async () => {
     setResetting(true);
     try {
@@ -612,14 +620,6 @@ function EnginePanel() {
       setResetting(false);
     }
   };
-
-  if (!cfg.data) {
-    return (
-      <div className="px-3 py-6 font-mono text-[12px] text-muted-foreground">
-        {cfg.isLoading ? "› loading config…" : "› no config available"}
-      </div>
-    );
-  }
 
   return (
     <form
@@ -636,7 +636,7 @@ function EnginePanel() {
         })}
       >
         {({ isDirty, isValid, values }) => {
-          const engineDiff = diffConfigList(cfg.data!, values);
+          const engineDiff = diffConfigList(initial, values);
           return (
             <div
               aria-hidden={!isDirty}
@@ -649,9 +649,7 @@ function EnginePanel() {
                 <div
                   className={cn(
                     "flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/[0.04] p-2 shadow-sm transition-opacity duration-200 ease-out",
-                    isDirty
-                      ? "opacity-100"
-                      : "pointer-events-none opacity-0",
+                    isDirty ? "opacity-100" : "pointer-events-none opacity-0",
                   )}
                 >
                   <span
@@ -820,7 +818,7 @@ function EnginePanel() {
             eyebrow="Engine"
             title="Apply engine changes?"
             description="Engine infra knobs apply live. HTTP-tracker pool changes take effect on the next outgoing announce."
-            items={diffConfigList(cfg.data!, values)}
+            items={diffConfigList(initial, values)}
             pending={update.isPending}
             confirmLabel="Save engine"
             onConfirm={() => form.handleSubmit()}

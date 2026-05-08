@@ -39,12 +39,11 @@ export function PresetPickerSheet({
   const { data: profiles } = useProfiles();
   const items = (presets ?? []).filter((p) => p.id !== excludeId);
 
-  const activeDefaultId =
-    profiles?.find((p) => p.active)?.id ?? null;
+  const activeDefaultId = profiles?.find((p) => p.active)?.id ?? null;
   const resolveProfile = (p: Preset): string | null =>
     p.policy.client_profile_id ?? activeDefaultId;
   const currentPreset = selectedId
-    ? (presets ?? []).find((p) => p.id === selectedId) ?? null
+    ? ((presets ?? []).find((p) => p.id === selectedId) ?? null)
     : null;
   const currentProfile = currentPreset ? resolveProfile(currentPreset) : null;
 

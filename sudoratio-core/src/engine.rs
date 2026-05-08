@@ -31,19 +31,15 @@ impl Engine {
     /// Open or create persistence at `data_dir/session.sqlite3`, restore presets and
     /// torrents, register bundled + user client profiles, and start the orchestrator.
     /// `data_dir = None` returns an in-memory-only engine (tests).
-    pub async fn new(
-        config: EngineConfig,
-        data_dir: Option<PathBuf>,
-    ) -> anyhow::Result<Arc<Self>> {
+    pub async fn new(config: EngineConfig, data_dir: Option<PathBuf>) -> anyhow::Result<Arc<Self>> {
         let db = match data_dir.as_ref() {
             Some(dir) => {
                 std::fs::create_dir_all(dir)?;
                 tokio::fs::create_dir_all(dir.join(crate::profile_store::SUBDIR)).await?;
                 let p = dir.join("session.sqlite3");
                 let p_clone = p.clone();
-                let db =
-                    tokio::task::spawn_blocking(move || Persistence::open(p_clone.as_path()))
-                        .await??;
+                let db = tokio::task::spawn_blocking(move || Persistence::open(p_clone.as_path()))
+                    .await??;
                 tracing::info!(path = %p.display(), "session sqlite ready");
                 db
             }
@@ -293,17 +289,46 @@ impl Engine {
             return Err(PresetError::DeleteDefault);
         }
         let target_id = reassign_to.unwrap_or(crate::preset::DEFAULT_PRESET_ID);
-        if self.presets.get(target_id).is_none() {
-            return Err(PresetError::NotFound(target_id.into()));
-        }
+        let target_preset = self
+            .presets
+            .get(target_id)
+            .ok_or_else(|| PresetError::NotFound(target_id.into()))?;
         let affected: Vec<TorrentId> = self
             .torrents
             .iter()
             .filter(|r| r.value().preset_id() == id)
             .map(|r| *r.key())
             .collect();
+
+        if !affected.is_empty() {
+            let active_default = self
+                .active_profile
+                .read()
+                .await
+                .as_ref()
+                .map(|p| p.0.clone());
+            let target_profile = target_preset
+                .policy
+                .load()
+                .client_profile_id
+                .clone()
+                .or_else(|| active_default.clone());
+            for tid in &affected {
+                let src_profile = self
+                    .torrents
+                    .get(tid)
+                    .and_then(|e| e.policy_snapshot().client_profile_id.clone())
+                    .or_else(|| active_default.clone());
+                if src_profile != target_profile {
+                    return Err(PresetError::ReassignClientMismatch);
+                }
+            }
+        }
+
         for tid in &affected {
-            let _ = scheduler::slots::move_torrent_to_preset(self, *tid, target_id).await;
+            if let Err(e) = scheduler::slots::move_torrent_to_preset(self, *tid, target_id).await {
+                tracing::warn!(torrent_id = %tid, error = %e, "preset reassign failed");
+            }
             self.persist_torrent(*tid);
         }
         self.presets.remove(id)?;
@@ -375,17 +400,15 @@ impl Engine {
         }
 
         if !removed_variant_ids.is_empty() {
-            self.cascade_reset_preset_profiles(&removed_variant_ids).await;
+            self.cascade_reset_preset_profiles(&removed_variant_ids)
+                .await;
         }
         Ok(removed)
     }
 
     /// Reset every preset whose `client_profile_id` is in `dead_ids` back to `None`.
     /// Persists each touched preset and invalidates the matching torrents' identity caches.
-    async fn cascade_reset_preset_profiles(
-        &self,
-        dead_ids: &std::collections::HashSet<String>,
-    ) {
+    async fn cascade_reset_preset_profiles(&self, dead_ids: &std::collections::HashSet<String>) {
         let affected: Vec<String> = self
             .presets
             .list()
@@ -994,7 +1017,11 @@ impl Engine {
             })
             .map(|r| self.torrent_snapshot(*r.key(), r.value()))
             .collect();
-        all.sort_by(|a, b| a.queue_position.cmp(&b.queue_position).then(a.id.cmp(&b.id)));
+        all.sort_by(|a, b| {
+            a.queue_position
+                .cmp(&b.queue_position)
+                .then(a.id.cmp(&b.id))
+        });
         let total = all.len();
         let items: Vec<Torrent> = all.into_iter().skip(offset).take(limit).collect();
         (items, total)
@@ -1016,9 +1043,10 @@ impl Engine {
 
     /// Remove the torrent from the engine (and session export); `stopped` if it had contacted the tracker.
     pub async fn remove_torrent(&self, id: TorrentId) -> Result<(), SudoratioError> {
-        let info_hash = self.torrents.get(&id).and_then(|e| {
-            e.info_hash.as_ref().map(|s| s.to_string())
-        });
+        let info_hash = self
+            .torrents
+            .get(&id)
+            .and_then(|e| e.info_hash.as_ref().map(|s| s.to_string()));
         scheduler::remove_torrent(self, id).await?;
         if let Some(h) = info_hash {
             self.spawn_db("delete_torrent", move |db| db.delete_torrent(&h));

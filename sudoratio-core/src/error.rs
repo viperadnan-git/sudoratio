@@ -25,6 +25,8 @@ pub enum SudoratioError {
     NoActiveClientProfile,
     #[error("unknown torrent")]
     TorrentNotFound,
+    #[error("unknown preset")]
+    PresetNotFound,
     #[error("torrent already added: {0}")]
     TorrentAlreadyExists(String),
     #[error("torrent is not active (must be downloading or seeding)")]
@@ -62,6 +64,7 @@ impl SudoratioError {
             Self::ProfileImmutable(_) => "profile_immutable",
             Self::NoActiveClientProfile => "no_active_profile",
             Self::TorrentNotFound => "torrent_not_found",
+            Self::PresetNotFound => "preset_not_found",
             Self::TorrentAlreadyExists(_) => "torrent_already_exists",
             Self::TorrentNotActive => "torrent_not_active",
             Self::TorrentNoMetainfo => "torrent_no_metainfo",

@@ -66,7 +66,13 @@ pub struct PresetPolicyUpdate {
 
 impl PresetPolicyUpdate {
     pub fn merge(self, p: &mut PresetPolicy) {
-        macro_rules! set { ($f:ident) => { if let Some(v) = self.$f { p.$f = v; } } }
+        macro_rules! set {
+            ($f:ident) => {
+                if let Some(v) = self.$f {
+                    p.$f = v;
+                }
+            };
+        }
         set!(min_upload_speed);
         set!(max_upload_speed);
         set!(min_download_speed);
@@ -165,6 +171,8 @@ pub enum PresetError {
     DeleteDefault,
     #[error("preset {0:?} has torrents; specify reassign_to or move them first")]
     HasTorrents(String),
+    #[error("reassign target uses a different client profile; pick a same-client target or delete the torrents first")]
+    ReassignClientMismatch,
 }
 
 fn now_ms() -> u64 {

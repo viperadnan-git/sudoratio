@@ -9,7 +9,7 @@ pub type ApiErrorResponse = (StatusCode, Json<ApiErrorBody>);
 pub fn status_for(e: &SudoratioError) -> StatusCode {
     use SudoratioError::*;
     match e {
-        UnknownClientProfile(_) | TorrentNotFound => StatusCode::NOT_FOUND,
+        UnknownClientProfile(_) | TorrentNotFound | PresetNotFound => StatusCode::NOT_FOUND,
         ProfileImmutable(_)
         | SeedingAlreadyRunning
         | EngineShuttingDown

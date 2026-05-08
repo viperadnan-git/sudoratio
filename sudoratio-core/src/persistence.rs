@@ -12,8 +12,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::preset::{PresetPolicy, PresetSnapshot};
 use crate::torrent::{
-    AnnounceEvent, AnnounceRequestTrace, AnnounceResponseTrace, AnnounceTrace, StopReason,
-    Torrent, TorrentId, TorrentRuntime, TorrentState, TrackersHttp,
+    AnnounceEvent, AnnounceRequestTrace, AnnounceResponseTrace, AnnounceTrace, StopReason, Torrent,
+    TorrentId, TorrentRuntime, TorrentState, TrackersHttp,
 };
 
 const SCHEMA_VERSION: i32 = 1;
@@ -151,8 +151,8 @@ impl Persistence {
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
             let policy_json: String = row.get(4)?;
-            let policy: PresetPolicy = serde_json::from_str(&policy_json)
-                .with_context(|| "preset policy_json corrupt")?;
+            let policy: PresetPolicy =
+                serde_json::from_str(&policy_json).with_context(|| "preset policy_json corrupt")?;
             out.push(PresetSnapshot {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -455,4 +455,3 @@ fn parse_event(s: &str) -> Result<AnnounceEvent> {
         _ => anyhow::bail!("unknown announce event {s:?}"),
     }
 }
-

@@ -140,11 +140,7 @@ impl BandwidthDispatcher {
     }
 
     /// Register a torrent reading its bandwidth bounds from its preset policy.
-    pub fn register_torrent(
-        &self,
-        id: TorrentId,
-        torrent_rows: &DashMap<TorrentId, TorrentEntry>,
-    ) {
+    pub fn register_torrent(&self, id: TorrentId, torrent_rows: &DashMap<TorrentId, TorrentEntry>) {
         let Some(row) = torrent_rows.get(&id) else {
             return;
         };
