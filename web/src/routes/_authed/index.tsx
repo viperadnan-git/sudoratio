@@ -4,9 +4,13 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  HardDrive,
   Inbox,
+  Scale,
+  Timer,
   TrendingDown,
   TrendingUp,
+  Users,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { z } from "zod";
@@ -284,17 +288,14 @@ function TorrentsPage() {
 
             {/* Desktop table */}
             <div className="hidden overflow-hidden rounded-md border bg-card md:block">
-              <table className="w-full text-[12.5px]">
+              <table className="w-full table-fixed text-[12.5px]">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
                     <SortableTh sortKey="name" sort={sort} onSort={onSort}>
                       Name
                     </SortableTh>
-                    {activeId === "all" && (
-                      <Th className="w-[150px]">Preset</Th>
-                    )}
                     <SortableTh
-                      className="w-[120px]"
+                      className="w-[104px] lg:w-[120px]"
                       sortKey="state"
                       sort={sort}
                       onSort={onSort}
@@ -302,7 +303,7 @@ function TorrentsPage() {
                       Status
                     </SortableTh>
                     <SortableTh
-                      className="w-[88px]"
+                      className="w-[80px] lg:w-[88px]"
                       align="right"
                       sortKey="size"
                       sort={sort}
@@ -311,7 +312,7 @@ function TorrentsPage() {
                       Size
                     </SortableTh>
                     <SortableTh
-                      className="w-[72px]"
+                      className="w-[60px] lg:w-[72px]"
                       align="right"
                       sortKey="ratio"
                       sort={sort}
@@ -320,7 +321,7 @@ function TorrentsPage() {
                       Ratio
                     </SortableTh>
                     <SortableTh
-                      className="w-[88px]"
+                      className="w-[92px] lg:w-[96px]"
                       align="right"
                       sortKey="upload_speed"
                       sort={sort}
@@ -329,7 +330,7 @@ function TorrentsPage() {
                       ↑
                     </SortableTh>
                     <SortableTh
-                      className="w-[88px]"
+                      className="w-[92px] lg:w-[96px]"
                       align="right"
                       sortKey="download_speed"
                       sort={sort}
@@ -338,7 +339,7 @@ function TorrentsPage() {
                       ↓
                     </SortableTh>
                     <SortableTh
-                      className="w-[80px]"
+                      className="hidden w-[80px] lg:table-cell"
                       align="right"
                       sortKey="swarm"
                       sort={sort}
@@ -347,7 +348,7 @@ function TorrentsPage() {
                       S / L
                     </SortableTh>
                     <SortableTh
-                      className="w-[80px]"
+                      className="hidden w-[80px] lg:table-cell"
                       align="right"
                       sortKey="next"
                       sort={sort}
@@ -355,7 +356,7 @@ function TorrentsPage() {
                     >
                       Next
                     </SortableTh>
-                    <Th className="w-[44px]" />
+                    <Th className="w-[40px] lg:w-[44px]" />
                   </tr>
                 </thead>
                 <tbody>
@@ -366,7 +367,6 @@ function TorrentsPage() {
                       now={now}
                       onOpen={open}
                       preset={presetById.get(t.preset_id) ?? null}
-                      showPresetCol={activeId === "all"}
                     />
                   ))}
                 </tbody>
@@ -413,21 +413,21 @@ function HeroStat({
   sub?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 bg-background p-4 md:p-5">
+    <div className="flex flex-col gap-1.5 bg-background p-3 md:gap-2 md:p-5">
       <div className="flex items-center gap-1.5 text-muted-foreground">
         {icon}
         <span className="eyebrow">{label}</span>
       </div>
-      <div className="num flex items-baseline gap-1.5 text-[24px] font-semibold leading-none tracking-tight md:text-[28px]">
+      <div className="num flex items-baseline gap-1.5 text-[18px] font-semibold leading-none tracking-tight md:text-[22px] lg:text-[28px]">
         <span>{value}</span>
         {valueSuffix && (
-          <span className="text-[14px] font-medium text-muted-foreground/70 md:text-[15px]">
+          <span className="text-[11px] font-medium text-muted-foreground/70 md:text-[12px] lg:text-[15px]">
             {valueSuffix}
           </span>
         )}
       </div>
       {sub && (
-        <div className="font-mono text-[10.5px] uppercase tabular-nums tracking-wider text-muted-foreground/80">
+        <div className="font-mono text-[10px] uppercase tabular-nums tracking-wider text-muted-foreground/80 md:text-[10.5px]">
           {sub}
         </div>
       )}
@@ -533,13 +533,11 @@ function TorrentRow({
   now,
   onOpen,
   preset,
-  showPresetCol,
 }: {
   t: Torrent;
   now: number;
   onOpen: (h: string | null | undefined) => void;
   preset: Preset | null;
-  showPresetCol: boolean;
 }) {
   const isActive = t.state === "downloading" || t.state === "seeding";
   const nextCountdown = (() => {
@@ -553,34 +551,23 @@ function TorrentRow({
       className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-accent/40"
       onClick={() => onOpen(t.info_hash)}
     >
-      <Td className="max-w-0">
-        <div className="flex items-center gap-2">
-          {!showPresetCol && preset && (
-            <span
-              aria-hidden="true"
-              className="size-1.5 shrink-0 rounded-full"
-              style={{ background: preset.color }}
+      <Td>
+        <div className="truncate font-medium leading-tight" title={t.name}>
+          {t.name}
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          {preset && (
+            <PresetPill
+              color={preset.color}
+              name={preset.name}
+              className="shrink-0"
             />
           )}
-          <span className="min-w-0 flex-1 truncate font-medium leading-tight">
-            {t.name}
+          <span className="num truncate text-[11px] text-muted-foreground">
+            {shortHash(t.info_hash)}
           </span>
         </div>
-        <div className="num mt-0.5 truncate text-[11px] text-muted-foreground">
-          {shortHash(t.info_hash)}
-        </div>
       </Td>
-      {showPresetCol && (
-        <Td nowrap>
-          {preset ? (
-            <PresetPill color={preset.color} name={preset.name} />
-          ) : (
-            <span className="font-mono text-[11px] text-muted-foreground/50">
-              —
-            </span>
-          )}
-        </Td>
-      )}
       <Td nowrap>
         <TorrentStatusBadge t={t} />
       </Td>
@@ -602,12 +589,12 @@ function TorrentRow({
           {fmtSpeed(t.download_speed)}
         </span>
       </Td>
-      <Td align="right" nowrap>
+      <Td align="right" nowrap className="hidden lg:table-cell">
         <span className="num text-foreground/80">
           {t.seeders ?? "—"} / {t.leechers ?? "—"}
         </span>
       </Td>
-      <Td align="right" nowrap>
+      <Td align="right" nowrap className="hidden lg:table-cell">
         <span
           className={cn(
             "num tabular-nums",
@@ -646,36 +633,70 @@ function TorrentCard({
   showPresetPill: boolean;
 }) {
   const isActive = t.state === "downloading" || t.state === "seeding";
+  const isDownloading = t.state === "downloading";
   const nextCountdown = (() => {
     if (!isActive || !t.last_announced_at || !t.announce_interval) return "—";
     return fmtCountdown(t.last_announced_at + t.announce_interval * 1000 - now);
   })();
-  const railColor = stateRailColor(t);
   const upBps = t.upload_speed ?? 0;
   const dnBps = t.download_speed ?? 0;
+  const pct = (() => {
+    if (!isDownloading) return null;
+    const size = t.size ?? 0;
+    if (size <= 0) return null;
+    const left = t.left ?? size;
+    return Math.max(0, Math.min(100, (100 * (size - left)) / size));
+  })();
 
   return (
     <li>
-      <button
-        type="button"
+      {/** biome-ignore lint/a11y/useSemanticElements: real <button> would nest the actions trigger; div role=button keeps HTML valid */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => onOpen(t.info_hash)}
-        className="group relative block w-full overflow-hidden rounded-md border bg-card pl-[10px] pr-2.5 py-2.5 text-left transition-colors hover:bg-accent/40 active:bg-accent/60"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen(t.info_hash);
+          }
+        }}
+        className="group block w-full cursor-pointer overflow-hidden rounded-md border bg-card text-left transition-colors hover:bg-accent/30 active:bg-accent/50 focus-visible:outline-2 focus-visible:outline-foreground/30"
       >
-        {/* Left state rail. Full height, 3px wide, color encodes state. */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"
-          style={{ background: railColor }}
-        />
-
-        {/* Line 1 — name + actions */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1 truncate text-[13.5px] font-medium leading-tight">
-            {t.name}
+        {/* Hero — name + actions */}
+        <div className="flex items-start justify-between gap-2 px-3 pt-3">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-semibold leading-tight">
+              {t.name}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 num text-[10.5px]">
+              <TorrentStatusBadge t={t} />
+              {showPresetPill && preset && (
+                <>
+                  <Dot />
+                  <PresetPill color={preset.color} name={preset.name} />
+                </>
+              )}
+              <Dot />
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <HardDrive className="size-3" strokeWidth={1.75} />
+                <span className="text-foreground/80">{fmtBytes(t.size)}</span>
+              </span>
+              <Dot />
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 font-medium",
+                  ratioColorClass(t.uploaded, t.size),
+                )}
+              >
+                <Scale className="size-3" strokeWidth={1.75} />
+                <span>{fmtRatio(t.uploaded, t.size)}×</span>
+              </span>
+            </div>
           </div>
           {/** biome-ignore lint/a11y/noStaticElementInteractions: action wrapper inside clickable card */}
           <div
-            className="-mr-1 shrink-0"
+            className="-mr-1 -mt-0.5 shrink-0"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
@@ -683,57 +704,78 @@ function TorrentCard({
           </div>
         </div>
 
-        {/* Line 2 — single horizontal metric strip with `·` separators. */}
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 num text-[11px] text-muted-foreground">
-          <TorrentStatusBadge t={t} />
-          {showPresetPill && preset && (
-            <>
-              <Sep />
-              <PresetPill color={preset.color} name={preset.name} />
-            </>
-          )}
-          <Sep />
-          <span className="text-foreground/80">{fmtBytes(t.size)}</span>
-          <Sep />
-          <span
-            className={cn("font-medium", ratioColorClass(t.uploaded, t.size))}
-          >
-            {fmtRatio(t.uploaded, t.size)}×
-          </span>
-          <Sep />
+        {/* Progress bar — downloading only. */}
+        {pct != null && (
+          <div className="flex items-center gap-2 px-3 pt-2.5">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/10">
+              <div
+                className="h-full rounded-full bg-signal transition-[width] duration-500 ease-out"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="num shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+              {pct.toFixed(0)}%
+            </span>
+          </div>
+        )}
+
+        {/* Metric strip — 4 equal cells, hairline divider above. */}
+        <div className="mt-2.5 grid grid-cols-4 gap-x-2 border-t border-border/50 px-3 py-2 num text-[11px] text-muted-foreground">
           <span
             className={cn(
-              "inline-flex items-center gap-0.5",
+              "inline-flex min-w-0 items-center gap-1.5",
               upBps > 0 && "text-success",
             )}
           >
-            <span aria-hidden>↑</span>
-            <span>{compactSpeed(upBps)}</span>
+            <TrendingUp
+              className={cn(
+                "size-3 shrink-0",
+                upBps > 0 ? "text-current" : "text-muted-foreground/70",
+              )}
+              strokeWidth={1.75}
+            />
+            <span className="truncate">{compactSpeed(upBps)}</span>
           </span>
           <span
             className={cn(
-              "inline-flex items-center gap-0.5",
+              "inline-flex min-w-0 items-center gap-1.5",
               dnBps > 0 && "text-signal",
             )}
           >
-            <span aria-hidden>↓</span>
-            <span>{compactSpeed(dnBps)}</span>
+            <TrendingDown
+              className={cn(
+                "size-3 shrink-0",
+                dnBps > 0 ? "text-current" : "text-muted-foreground/70",
+              )}
+              strokeWidth={1.75}
+            />
+            <span className="truncate">{compactSpeed(dnBps)}</span>
           </span>
-          <Sep />
-          <span className="tabular-nums">
-            {t.seeders ?? "—"}
-            <span className="text-muted-foreground/50">/</span>
-            {t.leechers ?? "—"}
+          <span className="inline-flex min-w-0 items-center gap-1.5 tabular-nums">
+            <Users
+              className="size-3 shrink-0 text-muted-foreground/70"
+              strokeWidth={1.75}
+            />
+            <span className="truncate">
+              {t.seeders ?? "—"}
+              <span className="text-muted-foreground/50">/</span>
+              {t.leechers ?? "—"}
+            </span>
           </span>
-          <Sep />
-          <span className="tabular-nums">{nextCountdown}</span>
+          <span className="inline-flex min-w-0 items-center gap-1.5 tabular-nums">
+            <Timer
+              className="size-3 shrink-0 text-muted-foreground/70"
+              strokeWidth={1.75}
+            />
+            <span className="truncate">{nextCountdown}</span>
+          </span>
         </div>
-      </button>
+      </div>
     </li>
   );
 }
 
-function Sep() {
+function Dot() {
   return (
     <span aria-hidden="true" className="text-muted-foreground/40">
       ·
@@ -741,32 +783,10 @@ function Sep() {
   );
 }
 
-/** Map torrent state → CSS-var color used by the left rail. */
-function stateRailColor(t: Torrent): string {
-  switch (t.state) {
-    case "seeding":
-      return "var(--success)";
-    case "downloading":
-      return "var(--signal)";
-    case "queued":
-      return "var(--muted-foreground)";
-    case "stopped":
-      switch (t.reason) {
-        case "tracker_failed":
-          return "var(--destructive)";
-        case "upload_ratio":
-        case "no_leechers":
-          return "var(--warn)";
-        default:
-          return "var(--muted-foreground)";
-      }
-  }
-}
-
-/** Compact speed: drop "/s" suffix and zero-pad to keep strip width stable. */
+/** Speed in KB/s with thousands separator. */
 function compactSpeed(bps: number): string {
-  if (!bps) return "0";
-  return fmtSpeed(bps).replace(/\s?\/s$/, "");
+  if (!bps) return "0 KB/s";
+  return `${Math.round(bps / 1024).toLocaleString()} KB/s`;
 }
 
 /* ───────────────────────── EMPTY ───────────────────────── */

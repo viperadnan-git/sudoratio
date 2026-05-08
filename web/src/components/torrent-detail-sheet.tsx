@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
   Check,
   ChevronDown,
@@ -17,6 +18,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { PresetPill } from "@/components/preset-pill";
 import { TorrentActions } from "@/components/torrent-actions";
 import { TorrentStatusBadge } from "@/components/torrent-status-badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +52,7 @@ const ANNOUNCES_PAGE_SIZE = 25;
 export function TorrentDetailSheet({ infoHash, onClose }: Props) {
   const open = !!infoHash;
   const torrent = useTorrent(infoHash ?? undefined);
+  const presets = usePresets();
   const [page, setPage] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset paging on torrent switch
   useEffect(() => {
@@ -61,6 +64,9 @@ export function TorrentDetailSheet({ infoHash, onClose }: Props) {
     page * ANNOUNCES_PAGE_SIZE,
   );
   const t = torrent.data;
+  const preset = t
+    ? (presets.data?.find((p) => p.id === t.preset_id) ?? null)
+    : null;
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -114,6 +120,16 @@ export function TorrentDetailSheet({ infoHash, onClose }: Props) {
               {/* Status row */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3">
                 <TorrentStatusBadge t={t} />
+                {preset && (
+                  <Link
+                    to="/config"
+                    search={{ preset: preset.id }}
+                    className="inline-flex items-center rounded-full leading-none transition-opacity hover:opacity-80"
+                    title={`Open preset · ${preset.name}`}
+                  >
+                    <PresetPill color={preset.color} name={preset.name} />
+                  </Link>
+                )}
                 {t.download_before_seed && (
                   <span className="eyebrow">DL-FIRST</span>
                 )}
@@ -276,7 +292,7 @@ function Stat({
   accent?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-1.5 bg-background px-4 py-3.5">
+    <div className="flex flex-col gap-1 bg-background px-3 py-3 md:gap-1.5 md:px-4 md:py-3.5">
       <span className="eyebrow flex items-center gap-1.5 text-muted-foreground">
         {live && (
           <span className="text-success">
@@ -288,7 +304,7 @@ function Stat({
       </span>
       <span
         className={cn(
-          "num text-[15px] font-medium leading-none",
+          "num text-[12.5px] font-medium leading-none md:text-[15px]",
           accent && "text-foreground",
         )}
       >

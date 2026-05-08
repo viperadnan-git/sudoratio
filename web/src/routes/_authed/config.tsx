@@ -276,6 +276,7 @@ function PresetEditor({
     },
   });
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-seed only on id change; object refs would clobber edits on the 5s refetch
   useEffect(() => {
     if (mode.kind === "edit" && preset) {
       form.reset(defaultsForMode(preset, null));
@@ -916,9 +917,9 @@ function ConnectivityRow({ port }: { port: number | null }) {
         </Button>
       </div>
       {r && (
-        <div className="grid grid-cols-2 gap-1.5 pt-1">
-          <FamilyLine label="IPv4" data={r.ipv4} />
-          <FamilyLine label="IPv6" data={r.ipv6} />
+        <div className="grid grid-cols-1 gap-1.5 pt-1 lg:grid-cols-2">
+          <FamilyLine label="IPv4" data={r.ipv4} port={r.port} />
+          <FamilyLine label="IPv6" data={r.ipv6} port={r.port} />
         </div>
       )}
     </div>
@@ -928,9 +929,11 @@ function ConnectivityRow({ port }: { port: number | null }) {
 function FamilyLine({
   label,
   data,
+  port,
 }: {
   label: string;
   data: ConnectivityFamily;
+  port: number;
 }) {
   return (
     <div className="flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 font-mono text-[10.5px]">
@@ -939,9 +942,11 @@ function FamilyLine({
       ) : (
         <XCircle className="size-3 text-destructive" strokeWidth={2} />
       )}
-      <span className="font-medium uppercase tracking-wider">{label}</span>
-      <span className="ml-auto truncate text-muted-foreground/70">
-        {data.public_ip ?? data.error ?? "—"}
+      <span className="shrink-0 font-medium uppercase tracking-wider">
+        {label}
+      </span>
+      <span className="ml-auto break-all text-right tabular-nums text-muted-foreground/70">
+        {data.public_ip ? `${data.public_ip}:${port}` : (data.error ?? "—")}
       </span>
     </div>
   );

@@ -273,10 +273,10 @@ function AggregateCeiling({ policy }: { policy: PresetPolicy }) {
       </header>
       <div className="bg-background px-3 py-3 md:px-4">
         <div className="flex items-baseline gap-1.5 leading-none">
-          <span className="text-[24px] font-semibold tabular-nums tracking-tight md:text-[28px]">
+          <span className="text-[18px] font-semibold tabular-nums tracking-tight md:text-[28px]">
             {fmtMbps(mbps)}
           </span>
-          <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground md:text-[11px]">
             {mbps >= 1000 ? "Gbps" : "Mbps"}
           </span>
         </div>
