@@ -427,7 +427,7 @@ function HeroStat({
         )}
       </div>
       {sub && (
-        <div className="font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground/80">
+        <div className="font-mono text-[10.5px] uppercase tabular-nums tracking-wider text-muted-foreground/80">
           {sub}
         </div>
       )}

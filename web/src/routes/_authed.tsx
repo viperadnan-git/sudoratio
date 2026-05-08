@@ -1,23 +1,24 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 
 import { AppShell } from "@/components/app-shell";
-import { isAuthenticated } from "@/lib/auth";
+import { ApiError, api } from "@/lib/api";
+import { clearToken, isAuthenticated } from "@/lib/auth";
 
-/**
- * Pathless layout that guards every nested route. `beforeLoad` runs before any data is fetched
- * (and before the route's component mounts) and throws a `redirect` to `/login` if there is no
- * stored bearer token. Children render inside the [`AppShell`].
- */
 export const Route = createFileRoute("/_authed")({
-  beforeLoad: ({ location }) => {
-    // beforeLoad runs server-side during SSR where localStorage is unavailable.
-    // Skip the check on the server; the client re-evaluates on hydration.
+  // /health is unauthenticated by design — use a gated endpoint to verify
+  // the token. 401 → clear + bounce; other errors fall through.
+  beforeLoad: async ({ location }) => {
     if (typeof window === "undefined") return;
     if (!isAuthenticated()) {
-      throw redirect({
-        to: "/login",
-        search: { redirect: location.href },
-      });
+      throw redirect({ to: "/login", search: { redirect: location.href } });
+    }
+    try {
+      await api("/api/v1/config", { skipAuthReset: true });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearToken();
+        throw redirect({ to: "/login", search: { redirect: location.href } });
+      }
     }
   },
   component: AuthedLayout,

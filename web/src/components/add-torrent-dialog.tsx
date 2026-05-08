@@ -173,10 +173,10 @@ export function AddTorrentDialog() {
               : `Queue · ${items.length} · ${fmtBytes(totalBytes)}`}
           </span>
           <DialogTitle className="text-base font-semibold">
-            Drop `.torrent` files to start announcing
+            Drop torrents to start simulation
           </DialogTitle>
           <DialogDescription className="text-[12px]">
-            Files are added one-by-one in order. Multi-select is supported.
+            Files are added one-by-one in order.
           </DialogDescription>
         </DialogHeader>
 
@@ -231,7 +231,7 @@ export function AddTorrentDialog() {
                 : "Append more to the queue"}
             </div>
             <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              ·torrent · multi-select supported
+              torrent only · multi-select supported
             </div>
           </div>
         </button>
@@ -294,7 +294,7 @@ export function AddTorrentDialog() {
           description="Applies to every file in this batch."
         />
 
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5 ms-auto">
           <Checkbox
             id="download-before-seed"
             checked={downloadBeforeSeed}
@@ -307,9 +307,6 @@ export function AddTorrentDialog() {
           >
             Download before seed
           </Label>
-          <span className="font-mono text-[11px] text-muted-foreground">
-            — applies to every file
-          </span>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">

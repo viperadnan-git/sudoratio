@@ -276,17 +276,13 @@ function PresetEditor({
     },
   });
 
-  // Re-seed when the preset (edit) or clone source (draft) finishes loading
-  // — defaultValues at mount may have been stale `null` while presets were
-  // still being fetched.
   useEffect(() => {
     if (mode.kind === "edit" && preset) {
       form.reset(defaultsForMode(preset, null));
     } else if (mode.kind === "draft" && cloneSource) {
       form.reset(defaultsForMode(null, cloneSource));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset?.id, cloneSource?.id, mode.kind, form.reset, preset, cloneSource]);
+  }, [preset?.id, cloneSource?.id]);
 
   const onResetDefaults = async () => {
     setResetting(true);

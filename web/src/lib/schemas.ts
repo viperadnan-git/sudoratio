@@ -99,3 +99,10 @@ export interface PresetCreateBody {
   color: string;
   policy?: PresetPolicy;
 }
+
+/* ─────────────────────────── Login ──────────────────────────────── */
+
+export const loginSchema = z.object({
+  password: z.string().min(1, "Password is required"),
+});
+export type LoginForm = z.infer<typeof loginSchema>;
