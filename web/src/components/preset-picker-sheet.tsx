@@ -55,7 +55,7 @@ export function PresetPickerSheet({
       >
         <SheetHeader className="space-y-1">
           <span className="eyebrow-strong">Presets</span>
-          <SheetTitle className="text-base font-semibold tracking-tight">
+          <SheetTitle className="text-base font-semibold tracking-tight break-words">
             {title}
           </SheetTitle>
           {description && (

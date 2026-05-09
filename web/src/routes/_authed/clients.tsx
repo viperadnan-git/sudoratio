@@ -719,13 +719,13 @@ function DeleteDialog({
 
         <div className="rounded-md border bg-card/40 px-3 py-2.5 font-mono text-[11.5px]">
           <div className="flex items-baseline justify-between gap-3">
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="eyebrow text-muted-foreground">client</div>
               <div className="num mt-1 truncate text-foreground">
                 {target?.client}
               </div>
             </div>
-            <div className="text-right">
+            <div className="shrink-0 text-right">
               <div className="eyebrow text-muted-foreground">variants</div>
               <div className="num mt-1 tabular-nums text-foreground">
                 {target?.variants.length ?? 0}
@@ -772,7 +772,7 @@ function ViewSourceDialog({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <span className="eyebrow-strong">Source · TOML</span>
-          <DialogTitle className="num text-base font-semibold">
+          <DialogTitle className="num text-base font-semibold break-all">
             {client}
           </DialogTitle>
           <DialogDescription className="text-[12px]">

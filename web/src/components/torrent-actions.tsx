@@ -7,11 +7,18 @@ import {
   Radio,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 
 import { PresetPickerSheet } from "@/components/preset-picker-sheet";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +45,21 @@ import type { Torrent } from "@/lib/types";
 
 type ConfirmKind = "announce" | "delete";
 
-export function TorrentActions({ t }: { t: Torrent }) {
+type ActionItem = {
+  key: string;
+  label: string;
+  icon: typeof Pause;
+  onSelect: () => void;
+  disabled?: boolean;
+  variant?: "default" | "destructive";
+};
+
+export type TorrentMenu = {
+  items: Array<ActionItem | "separator">;
+  dialogs: ReactNode;
+};
+
+export function useTorrentMenu(t: Torrent): TorrentMenu | null {
   const pause = usePauseTorrent();
   const resume = useResumeTorrent();
   const del = useDeleteTorrent();
@@ -76,62 +97,45 @@ export function TorrentActions({ t }: { t: Torrent }) {
     setConfirm(null);
   };
 
-  return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            aria-label="Torrent actions"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <MoreHorizontal className="size-4" strokeWidth={1.75} />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className="min-w-[12rem] font-mono text-[12px]"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {isPaused ? (
-            <DropdownMenuItem
-              onClick={() => wrap(resume.mutateAsync, "Resumed")(ih)}
-            >
-              <Play className="size-3.5" strokeWidth={1.75} />
-              Resume
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              onClick={() => wrap(pause.mutateAsync, "Paused")(ih)}
-            >
-              <Pause className="size-3.5" strokeWidth={1.75} />
-              Pause
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            disabled={!isActive}
-            onClick={() => setConfirm("announce")}
-          >
-            <Radio className="size-3.5" strokeWidth={1.75} />
-            Announce now
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setPickerOpen(true)}>
-            <MoveRight className="size-3.5" strokeWidth={1.75} />
-            Change preset
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => setConfirm("delete")}
-          >
-            <Trash2 className="size-3.5" strokeWidth={1.75} />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+  const items: Array<ActionItem | "separator"> = [
+    isPaused
+      ? {
+          key: "resume",
+          label: "Resume",
+          icon: Play,
+          onSelect: () => wrap(resume.mutateAsync, "Resumed")(ih),
+        }
+      : {
+          key: "pause",
+          label: "Pause",
+          icon: Pause,
+          onSelect: () => wrap(pause.mutateAsync, "Paused")(ih),
+        },
+    {
+      key: "announce",
+      label: "Announce now",
+      icon: Radio,
+      onSelect: () => setConfirm("announce"),
+      disabled: !isActive,
+    },
+    {
+      key: "preset",
+      label: "Change preset",
+      icon: MoveRight,
+      onSelect: () => setPickerOpen(true),
+    },
+    "separator",
+    {
+      key: "delete",
+      label: "Delete",
+      icon: Trash2,
+      onSelect: () => setConfirm("delete"),
+      variant: "destructive",
+    },
+  ];
 
+  const dialogs = (
+    <>
       <PresetPickerSheet
         open={pickerOpen}
         onOpenChange={setPickerOpen}
@@ -153,7 +157,6 @@ export function TorrentActions({ t }: { t: Torrent }) {
         title={`Move "${t.name}"`}
         description={`Currently in #${t.preset_id}`}
       />
-
       <ConfirmDialog
         kind="announce"
         open={confirm === "announce"}
@@ -170,6 +173,91 @@ export function TorrentActions({ t }: { t: Torrent }) {
         onCancel={() => setConfirm(null)}
         onConfirm={onConfirmDelete}
       />
+    </>
+  );
+
+  return { items, dialogs };
+}
+
+export function TorrentActionsKebab({ menu }: { menu: TorrentMenu }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          aria-label="Torrent actions"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <MoreHorizontal className="size-4" strokeWidth={1.75} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="min-w-[12rem] font-mono text-[12px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {menu.items.map((it, i) =>
+          it === "separator" ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: menu structure is static
+            <DropdownMenuSeparator key={`sep-${i}`} />
+          ) : (
+            <DropdownMenuItem
+              key={it.key}
+              variant={it.variant}
+              disabled={it.disabled}
+              onClick={it.onSelect}
+            >
+              <it.icon className="size-3.5" strokeWidth={1.75} />
+              {it.label}
+            </DropdownMenuItem>
+          ),
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function TorrentRowContextMenu({
+  menu,
+  children,
+}: {
+  menu: TorrentMenu;
+  children: ReactNode;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="min-w-[12rem] font-mono text-[12px]">
+        {menu.items.map((it, i) =>
+          it === "separator" ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: menu structure is static
+            <ContextMenuSeparator key={`sep-${i}`} />
+          ) : (
+            <ContextMenuItem
+              key={it.key}
+              variant={it.variant}
+              disabled={it.disabled}
+              onSelect={it.onSelect}
+            >
+              <it.icon className="size-3.5" strokeWidth={1.75} />
+              {it.label}
+            </ContextMenuItem>
+          ),
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+export function TorrentActions({ t }: { t: Torrent }) {
+  const menu = useTorrentMenu(t);
+  if (!menu) return null;
+  return (
+    <>
+      <TorrentActionsKebab menu={menu} />
+      {menu.dialogs}
     </>
   );
 }

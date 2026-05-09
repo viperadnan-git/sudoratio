@@ -61,7 +61,7 @@ export function PresetDeleteDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <span className="eyebrow-strong">Delete preset</span>
-          <DialogTitle className="text-base font-semibold">
+          <DialogTitle className="text-base font-semibold break-words">
             Remove "{preset?.name}"?
           </DialogTitle>
           <DialogDescription className="text-[12px]">

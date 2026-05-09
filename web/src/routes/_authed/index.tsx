@@ -18,7 +18,12 @@ import { z } from "zod";
 import { AddTorrentDialog } from "@/components/add-torrent-dialog";
 import { PresetChipStrip } from "@/components/preset-chip-strip";
 import { PresetPill } from "@/components/preset-pill";
-import { TorrentActions } from "@/components/torrent-actions";
+import {
+  TorrentActions,
+  TorrentActionsKebab,
+  TorrentRowContextMenu,
+  useTorrentMenu,
+} from "@/components/torrent-actions";
 import { TorrentDetailSheet } from "@/components/torrent-detail-sheet";
 import { TorrentStatusBadge } from "@/components/torrent-status-badge";
 import { useNow } from "@/hooks/use-now";
@@ -545,10 +550,11 @@ function TorrentRow({
     return fmtCountdown(t.last_announced_at + t.announce_interval * 1000 - now);
   })();
   const countdownLive = nextCountdown !== "—";
+  const menu = useTorrentMenu(t);
 
-  return (
+  const row = (
     <tr
-      className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-accent/40"
+      className="cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-accent/40 data-[state=open]:bg-accent/50"
       onClick={() => onOpen(t.info_hash)}
     >
       <Td>
@@ -610,10 +616,18 @@ function TorrentRow({
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
-          <TorrentActions t={t} />
+          {menu && <TorrentActionsKebab menu={menu} />}
         </div>
       </Td>
     </tr>
+  );
+
+  if (!menu) return row;
+  return (
+    <>
+      <TorrentRowContextMenu menu={menu}>{row}</TorrentRowContextMenu>
+      {menu.dialogs}
+    </>
   );
 }
 
