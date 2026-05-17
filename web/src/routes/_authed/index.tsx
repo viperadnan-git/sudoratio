@@ -157,14 +157,14 @@ function TorrentsPage() {
     return m;
   }, [presets]);
   const totals = useMemo(() => {
-    const t: Record<string, number> = {
-      all: stats.data?.tracked_metainfo_torrents ?? 0,
-    };
+    const t: Record<string, number> = { all: 0 };
     for (const p of presets ?? []) {
-      t[p.id] = p.rollup?.torrent_count ?? 0;
+      const n = p.rollup?.torrent_count ?? 0;
+      t[p.id] = n;
+      t.all += n;
     }
     return t;
-  }, [presets, stats.data]);
+  }, [presets]);
   const [sort, setSort] = useState<{
     key: SortKey;
     dir: SortDir;
